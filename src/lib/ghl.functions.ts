@@ -52,7 +52,12 @@ export const updateGhlContactFromSale = async (opts: {
   data: {
     accessToken: string;
     contactId: string;
-    lineItems: { kind: "health" | "life" | "addon"; carrier: string; product: string }[];
+    lineItems: {
+      kind: "health" | "life" | "addon";
+      carrier: string;
+      product: string;
+      amount?: number;
+    }[];
   };
 }): Promise<{ success: boolean; updated: number }> =>
   post("/ghl/update-contact-from-sale/", opts.data, opts.data.accessToken);

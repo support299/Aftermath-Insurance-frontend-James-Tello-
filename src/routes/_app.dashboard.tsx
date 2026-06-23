@@ -5,6 +5,7 @@ import { ArrowDown, ArrowUp, DollarSign, Hash, Heart, LineChart as LineChartIcon
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
+import { useCompanySettings } from "@/lib/company-settings";
 import { type SaleRow, formatCurrency, formatPct } from "@/lib/sales";
 import { buildTrend, computeMetrics, pctChange, previousRange, rangeFromKey, type DateRangeKey } from "@/lib/metrics";
 import { computeCpa, fetchExpensesInRange, type ExpenseRow } from "@/lib/expenses";
@@ -14,6 +15,8 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { DateField } from "@/components/DateField";
 import { useRefreshTick } from "@/hooks/use-auto-refresh";
+import { LIVE_REFRESH_MS } from "@/lib/sales-events";
+import { useOnSalesChanged } from "@/hooks/use-on-sales-changed";
 import { usePersistentState } from "@/hooks/use-persistent-state";
 
 export const Route = createFileRoute("/_app/dashboard")({
@@ -33,6 +36,7 @@ const RANGE_OPTIONS: { key: DateRangeKey; label: string }[] = [
 
 function DashboardPage() {
   const { profile, roles, user } = useAuth();
+  const { reportingTimezone } = useCompanySettings();
   const isAgentOnly = roles.length > 0 && !roles.includes("admin") && !roles.includes("manager");
   const [rangeKey, setRangeKey] = usePersistentState<DateRangeKey>("dash.rangeKey", "month");
   const [customFrom, setCustomFrom] = useState<Date | undefined>(undefined);
@@ -60,10 +64,12 @@ function DashboardPage() {
 
   const range = useMemo(
     () => rangeFromKey(rangeKey, { from: customFrom, to: customTo }),
-    [rangeKey, customFrom, customTo],
+    [rangeKey, customFrom, customTo, reportingTimezone],
   );
   const prevRange = useMemo(() => previousRange(range), [range]);
-  const refreshTick = useRefreshTick(300_000);
+  const refreshTick = useRefreshTick(LIVE_REFRESH_MS);
+  const [salesVersion, setSalesVersion] = useState(0);
+  useOnSalesChanged(() => setSalesVersion((v) => v + 1));
 
   useEffect(() => {
     let active = true;
@@ -98,7 +104,7 @@ function DashboardPage() {
       setLoading(false);
     });
     return () => { active = false; };
-  }, [user?.id, isAgentOnly, range.from.getTime(), range.to.getTime(), refreshTick]);
+  }, [user?.id, isAgentOnly, range.from.getTime(), range.to.getTime(), refreshTick, salesVersion, reportingTimezone]);
 
   // Load targets: agent-specific if agent-only, else company-wide
   useEffect(() => {

@@ -1,14 +1,17 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import { format } from "date-fns";
 import { Pencil, PlusCircle, Search } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { type SaleRow, formatCurrency } from "@/lib/sales";
+import { formatSaleDateTime } from "@/lib/timezone";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { usePersistentState } from "@/hooks/use-persistent-state";
+import { useRefreshTick } from "@/hooks/use-auto-refresh";
+import { LIVE_REFRESH_MS } from "@/lib/sales-events";
+import { useOnSalesChanged } from "@/hooks/use-on-sales-changed";
 
 export const Route = createFileRoute("/_app/sales/")({
   component: SalesListPage,
@@ -23,6 +26,9 @@ function SalesListPage() {
   const [search, setSearch] = usePersistentState<string>("sales.search", "");
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 15;
+  const refreshTick = useRefreshTick(LIVE_REFRESH_MS);
+  const [salesVersion, setSalesVersion] = useState(0);
+  useOnSalesChanged(() => setSalesVersion((v) => v + 1));
 
   useEffect(() => {
     if (!user) return;
@@ -37,7 +43,7 @@ function SalesListPage() {
       setLoading(false);
     });
     return () => { active = false; };
-  }, [user?.id, isAdmin, isManager, profile?.team_id]);
+  }, [user?.id, isAdmin, isManager, profile?.team_id, refreshTick, salesVersion]);
 
   const canEdit = (s: SaleRow) =>
     isAdmin ||
@@ -105,7 +111,7 @@ function SalesListPage() {
                     <td className="num px-4 py-3 text-xs">{s.sale_id}</td>
                     <td className="px-4 py-3">{s.agent_name}</td>
                     <td className="px-4 py-3">{s.customer_name ?? "—"}</td>
-                    <td className="num px-4 py-3 text-xs text-muted-foreground">{format(new Date(s.sale_date), "MMM d, yyyy h:mm a")}</td>
+                    <td className="num px-4 py-3 text-xs text-muted-foreground">{formatSaleDateTime(s.sale_date)}</td>
                     <td className="num px-4 py-3 text-right font-medium">{formatCurrency(Number(s.deal_size))}</td>
                     <td className="px-4 py-3">{s.carrier}</td>
                     <td className="px-4 py-3 text-right">

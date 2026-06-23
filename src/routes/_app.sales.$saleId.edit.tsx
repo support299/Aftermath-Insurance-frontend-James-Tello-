@@ -4,11 +4,20 @@ import { ArrowLeft, Loader2, Plus, Save, Trash2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { type SaleRow, formatCurrency } from "@/lib/sales";
+import {
+  endOfDayEastern,
+  fromDatetimeLocalValue,
+  toDatetimeLocalValue,
+} from "@/lib/timezone";
+import { notifySalesChanged } from "@/lib/sales-events";
+import { updateGhlContactFromSale } from "@/lib/ghl.functions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { CustomerAutocomplete } from "@/components/CustomerAutocomplete";
+import { ReportingOnlyField } from "@/components/ReportingOnlyField";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_app/sales/$saleId/edit")({
@@ -35,7 +44,7 @@ function newLineItem(): LineItem {
 
 function SalesEditPage() {
   const { saleId } = Route.useParams();
-  const { user, profile, roles } = useAuth();
+  const { user, profile, roles, session } = useAuth();
   const navigate = useNavigate();
   const isAdmin = roles.includes("admin");
   const isManager = roles.includes("manager");
@@ -51,11 +60,13 @@ function SalesEditPage() {
   const [notFound, setNotFound] = useState(false);
 
   const [customerName, setCustomerName] = useState("");
+  const [ghlContactId, setGhlContactId] = useState<string | null>(null);
   const [saleDate, setSaleDate] = useState("");
   const [teamId, setTeamId] = useState<string>("");
   const [lineItems, setLineItems] = useState<LineItem[]>([newLineItem()]);
   const [leadSource, setLeadSource] = useState("");
   const [notes, setNotes] = useState("");
+  const [reportingOnly, setReportingOnly] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -73,7 +84,8 @@ function SalesEditPage() {
       const s = sRes.data as any;
       setSale(s);
       setCustomerName(s.customer_name ?? "");
-      setSaleDate(new Date(s.sale_date).toISOString().slice(0, 16));
+      setGhlContactId(s.ghl_contact_id ?? null);
+      setSaleDate(toDatetimeLocalValue(new Date(s.sale_date)));
       setTeamId(s.team_id ?? "");
       const carriersData = (cRes.data ?? []) as CarrierOpt[];
       const addOnsData = (aRes.data ?? []) as AddOnOpt[];
@@ -116,6 +128,7 @@ function SalesEditPage() {
       }
       setLeadSource(s.lead_source ?? "");
       setNotes(s.notes ?? "");
+      setReportingOnly(Boolean(s.reporting_only));
       setTeams(tRes.data ?? []);
       setCarriers(carriersData);
       setProducts(pRes.data ?? []);
@@ -132,6 +145,13 @@ function SalesEditPage() {
     if (isManager && sale.team_id && profile?.team_id && sale.team_id === profile.team_id) return true;
     return sale.agent_id === user.id;
   }, [sale, user, profile, isAdmin, isManager]);
+
+  const onReportingOnlyChange = (checked: boolean) => {
+    setReportingOnly(checked);
+    if (checked) {
+      setSaleDate((s) => s || toDatetimeLocalValue(sale ? new Date(sale.sale_date) : undefined));
+    }
+  };
 
   const updateLine = (id: string, patch: Partial<LineItem>) =>
     setLineItems((prev) => prev.map((li) => (li.id === id ? { ...li, ...patch } : li)));
@@ -166,12 +186,21 @@ function SalesEditPage() {
     const team = teams.find((t) => t.id === teamId);
     const dealSize = normalized.reduce((s, li) => s + li.amount, 0);
     const first = normalized[0];
+    const saleInstant = reportingOnly
+      ? fromDatetimeLocalValue(saleDate)
+      : new Date(sale.sale_date);
+    if (reportingOnly && saleInstant.getTime() > endOfDayEastern().getTime()) {
+      setSaving(false);
+      toast.error("Sale date cannot be after today in the reporting timezone.");
+      return;
+    }
 
     const { error } = await supabase
       .from("sales")
       .update({
         customer_name: customerName,
-        sale_date: new Date(saleDate).toISOString(),
+        ghl_contact_id: reportingOnly ? null : ghlContactId,
+        sale_date: saleInstant.toISOString(),
         team_id: teamId || null,
         team_name: team?.name ?? null,
         deal_size: dealSize,
@@ -182,10 +211,37 @@ function SalesEditPage() {
         add_on_amounts: {},
         lead_source: leadSource || null,
         notes: notes || null,
+        reporting_only: reportingOnly,
       })
       .eq("id", sale.id);
+    if (error) { setSaving(false); toast.error(error.message); return; }
+
+    // Keep the GHL contact's custom fields in sync (skip when reporting only).
+    if (!reportingOnly) {
+      try {
+        const accessToken = session?.access_token;
+        if (accessToken && ghlContactId) {
+          await updateGhlContactFromSale({
+            data: {
+              accessToken,
+              contactId: ghlContactId,
+              lineItems: normalized.map((li) => ({
+                kind: li.kind,
+                carrier: li.carrier,
+                product: li.product,
+                amount: li.amount,
+              })),
+            },
+          });
+        }
+      } catch (err) {
+        console.error("[GHL update]", err);
+        toast.warning("Sale updated, but failed to sync GHL contact fields.");
+      }
+    }
+
     setSaving(false);
-    if (error) { toast.error(error.message); return; }
+    notifySalesChanged();
     toast.success("Sale updated");
     navigate({ to: "/sales" });
   };
@@ -195,6 +251,7 @@ function SalesEditPage() {
     if (!confirm(`Delete sale ${sale.sale_id}? This cannot be undone.`)) return;
     const { error } = await supabase.from("sales").delete().eq("id", sale.id);
     if (error) { toast.error(error.message); return; }
+    notifySalesChanged();
     toast.success("Sale deleted");
     navigate({ to: "/sales" });
   };
@@ -238,11 +295,25 @@ function SalesEditPage() {
       <form onSubmit={onSave} className="surface-card space-y-8 p-6 sm:p-8">
         <Section title="Sale details">
           <Field label="Customer name">
-            <Input value={customerName} onChange={(e) => setCustomerName(e.target.value)} />
+            <CustomerAutocomplete
+              value={customerName}
+              onChange={(v) => {
+                setCustomerName(v);
+                setGhlContactId(null);
+              }}
+              onSelect={(c) => {
+                setCustomerName(c.name ?? "");
+                setGhlContactId(c.id);
+              }}
+              placeholder="Search a contact…"
+            />
           </Field>
-          <Field label="Date of sale">
-            <Input type="datetime-local" value={saleDate} onChange={(e) => setSaleDate(e.target.value)} />
-          </Field>
+          <ReportingOnlyField checked={reportingOnly} onCheckedChange={onReportingOnlyChange} />
+          {reportingOnly && (
+            <Field label="Date of sale">
+              <Input type="datetime-local" value={saleDate} onChange={(e) => setSaleDate(e.target.value)} />
+            </Field>
+          )}
           <Field label="Team">
             <Select value={teamId || "__none"} onValueChange={(v) => setTeamId(v === "__none" ? "" : v)}>
               <SelectTrigger><SelectValue /></SelectTrigger>

@@ -1,6 +1,7 @@
 import { createFileRoute, Outlet, useLocation, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { useAuth } from "@/lib/auth";
+import { useCompanySettings } from "@/lib/company-settings";
 import { TopNav } from "@/components/TopNav";
 import platformBg from "@/assets/aftermath-logo.png";
 
@@ -10,6 +11,7 @@ export const Route = createFileRoute("/_app")({
 
 function AppLayout() {
   const { user, profile, loading } = useAuth();
+  const { loading: settingsLoading } = useCompanySettings();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -19,7 +21,7 @@ function AppLayout() {
     }
   }, [loading, user, profile, location.pathname, navigate]);
 
-  if (loading) {
+  if (loading || settingsLoading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />

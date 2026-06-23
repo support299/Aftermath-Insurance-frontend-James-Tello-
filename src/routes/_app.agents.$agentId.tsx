@@ -4,9 +4,13 @@ import { format } from "date-fns";
 import { ArrowDown, ArrowUp, ArrowLeft, DollarSign, Heart, LineChart as LineChartIcon, Package, Percent, ShieldPlus, TrendingUp, Wallet, Users } from "lucide-react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { supabase } from "@/integrations/supabase/client";
+import { useCompanySettings } from "@/lib/company-settings";
 import { type SaleRow, formatCurrency, formatPct } from "@/lib/sales";
 import { buildTrend, computeMetrics, pctChange, previousRange, rangeFromKey, type DateRangeKey } from "@/lib/metrics";
 import { computeCpa, fetchExpensesInRange, type ExpenseRow } from "@/lib/expenses";
+import { LIVE_REFRESH_MS } from "@/lib/sales-events";
+import { useOnSalesChanged } from "@/hooks/use-on-sales-changed";
+import { useRefreshTick } from "@/hooks/use-auto-refresh";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
@@ -38,6 +42,7 @@ type TargetSet = {
 
 function AgentDashboardPage() {
   const { agentId } = Route.useParams();
+  const { reportingTimezone } = useCompanySettings();
   const [rangeKey, setRangeKey] = useState<DateRangeKey>("month");
   const [customFrom, setCustomFrom] = useState<Date | undefined>(undefined);
   const [customTo, setCustomTo] = useState<Date | undefined>(undefined);
@@ -56,9 +61,12 @@ function AgentDashboardPage() {
 
   const range = useMemo(
     () => rangeFromKey(rangeKey, { from: customFrom, to: customTo }),
-    [rangeKey, customFrom, customTo],
+    [rangeKey, customFrom, customTo, reportingTimezone],
   );
   const prevRange = useMemo(() => previousRange(range), [range]);
+  const refreshTick = useRefreshTick(LIVE_REFRESH_MS);
+  const [salesVersion, setSalesVersion] = useState(0);
+  useOnSalesChanged(() => setSalesVersion((v) => v + 1));
 
   useEffect(() => {
     let active = true;
@@ -80,7 +88,7 @@ function AgentDashboardPage() {
       setLoading(false);
     });
     return () => { active = false; };
-  }, [agentId, range.from.getTime(), range.to.getTime()]);
+  }, [agentId, range.from.getTime(), range.to.getTime(), reportingTimezone, refreshTick, salesVersion]);
 
   // Targets: agent-specific, fallback to company
   useEffect(() => {

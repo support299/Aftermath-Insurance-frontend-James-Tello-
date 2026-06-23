@@ -61,10 +61,15 @@ export function CustomerAutocomplete({ value, onChange, onSelect, placeholder }:
     let cancelled = false;
     setLoading(true);
     const t = setTimeout(async () => {
+      // Strip chars that would break the PostgREST or-group syntax.
+      const term = query.replace(/[(),]/g, " ").trim();
+      const like = `%${term}%`;
       const { data, error } = await supabase
         .from("ghl_contacts")
         .select("id, name, email, phone, user_id")
-        .ilike("name", `%${query}%`)
+        .or(
+          `name.ilike.${like},email.ilike.${like},id.ilike.${like},phone.ilike.${like},user_id.ilike.${like}`,
+        )
         .order("name")
         .limit(8);
       if (cancelled) return;

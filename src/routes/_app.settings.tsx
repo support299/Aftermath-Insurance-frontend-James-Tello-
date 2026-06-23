@@ -1,8 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Loader2, Plus, Trash2, Save, Shield, KeyRound } from "lucide-react";
+import { Loader2, Plus, Trash2, Save, Shield, KeyRound, Clock } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
+import { useCompanySettings } from "@/lib/company-settings";
+import { REPORTING_TIMEZONE_OPTIONS } from "@/lib/timezone-options";
+import { formatSaleDateTime } from "@/lib/timezone";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -100,6 +103,7 @@ function SettingsPage() {
           <TabsTrigger value="addons">Add-ons</TabsTrigger>
           <TabsTrigger value="lead_sources">Lead Sources</TabsTrigger>
           <TabsTrigger value="targets">Targets</TabsTrigger>
+          <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="password">Password</TabsTrigger>
         </TabsList>
 
@@ -110,9 +114,75 @@ function SettingsPage() {
         <TabsContent value="addons"><NamedListPanel table="add_ons" label="Add-on" /></TabsContent>
         <TabsContent value="lead_sources"><NamedListPanel table="lead_sources" label="Lead Source" /></TabsContent>
         <TabsContent value="targets"><TargetsPanel /></TabsContent>
+        <TabsContent value="general"><ReportingTimezonePanel /></TabsContent>
         <TabsContent value="password"><PasswordPanel /></TabsContent>
       </Tabs>
     </div>
+  );
+}
+
+/* ---------------- Reporting timezone ---------------- */
+function ReportingTimezonePanel() {
+  const { reportingTimezone, updateReportingTimezone } = useCompanySettings();
+  const [selected, setSelected] = useState(reportingTimezone);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setSelected(reportingTimezone);
+  }, [reportingTimezone]);
+
+  const onSave = async (e: FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      await updateReportingTimezone(selected);
+      toast.success("Reporting timezone updated");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to save timezone");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Clock className="h-5 w-5" />
+          Reporting timezone
+        </CardTitle>
+        <CardDescription>
+          All sales, dashboards, and leaderboards use this timezone for date boundaries and display.
+          Times are stored in UTC and converted for reporting.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={onSave} className="max-w-md space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="reporting_timezone">Company timezone</Label>
+            <Select value={selected} onValueChange={setSelected}>
+              <SelectTrigger id="reporting_timezone">
+                <SelectValue placeholder="Select timezone" />
+              </SelectTrigger>
+              <SelectContent>
+                {REPORTING_TIMEZONE_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Current time: {formatSaleDateTime(new Date())}
+          </p>
+          <Button type="submit" disabled={saving || selected === reportingTimezone}>
+            {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+            Save timezone
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
   );
 }
 

@@ -1,11 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { Crown, Medal, Trophy } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
+import { useCompanySettings } from "@/lib/company-settings";
 import { type SaleRow, formatCurrency } from "@/lib/sales";
 import { rangeFromKey, type DateRangeKey } from "@/lib/metrics";
-import { fetchExpensesInRange, type ExpenseRow } from "@/lib/expenses";
+import { type ExpenseRow } from "@/lib/expenses";
+import { fetchLeaderboardData } from "@/lib/leaderboard";
+import { LIVE_REFRESH_MS } from "@/lib/sales-events";
+import { useOnSalesChanged } from "@/hooks/use-on-sales-changed";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { DateField } from "@/components/DateField";
@@ -75,9 +78,18 @@ function revenueByKind(s: SaleRow, kind: "life" | "health" | "addon"): number {
     .filter((li) => li.kind === kind)
     .reduce((sum, li: any) => sum + Number(li.amount ?? 0), 0);
 }
+function saleHasAddon(s: SaleRow, addonName?: string): boolean {
+  const fromLineItems = lineItemsOf(s).some(
+    (li) => li.kind === "addon" && (!addonName || (li as { product?: string }).product === addonName),
+  );
+  if (fromLineItems) return true;
+  if (!addonName) return (s.add_ons?.length ?? 0) > 0;
+  return s.add_ons?.includes(addonName) ?? false;
+}
 
 function LeaderboardsPage() {
-  const { user } = useAuth();
+  const { user, session } = useAuth();
+  const { reportingTimezone } = useCompanySettings();
   const [timeframe, setTimeframe] = usePersistentState<DateRangeKey>("lb.timeframe", "week");
   const [customFrom, setCustomFrom] = useState<Date | undefined>(undefined);
   const [customTo, setCustomTo] = useState<Date | undefined>(undefined);
@@ -90,44 +102,32 @@ function LeaderboardsPage() {
 
   const range = useMemo(
     () => rangeFromKey(timeframe, { from: customFrom, to: customTo }),
-    [timeframe, customFrom, customTo],
+    [timeframe, customFrom, customTo, reportingTimezone],
   );
 
-  const load = () => {
+  const load = useCallback(() => {
     setLoading(true);
-    Promise.all([
-      supabase
-        .from("sales")
-        .select("*")
-        .gte("sale_date", range.from.toISOString())
-        .lte("sale_date", range.to.toISOString())
-        .then(({ data }) => (data ?? []) as SaleRow[]),
-      fetchExpensesInRange(range.from, range.to),
-      supabase
-        .from("teams")
-        .select("id, name")
-        .order("name")
-        .then(({ data }) => (data ?? []) as TeamOption[]),
-      supabase
-        .from("profiles")
-        .select("id, display_name, team_id")
-        .order("display_name")
-        .then(({ data }) => (data ?? []) as AgentOption[]),
-    ]).then(([s, e, teamRows, agentRows]) => {
-      setSales(s);
-      setExpenses(e);
-      setAllTeams(teamRows);
-      setAllAgents(agentRows);
-      setRefreshedAt(new Date());
-      setLoading(false);
-    });
-  };
+    fetchLeaderboardData(range.from, range.to, session?.access_token)
+      .then((data) => {
+        setSales(data.sales);
+        setExpenses(data.expenses);
+        setAllTeams(data.teams as TeamOption[]);
+        setAllAgents(data.profiles as AgentOption[]);
+        setRefreshedAt(new Date());
+      })
+      .catch((err) => {
+        console.error("[Leaderboards]", err);
+      })
+      .finally(() => setLoading(false));
+  }, [range.from, range.to, session?.access_token]);
 
   useEffect(() => {
     load();
-    const t = setInterval(load, 300_000);
+    const t = setInterval(load, LIVE_REFRESH_MS);
     return () => clearInterval(t);
-  }, [range.from.getTime(), range.to.getTime()]);
+  }, [load, reportingTimezone]);
+
+  useOnSalesChanged(load);
 
   const [agentSearch, setAgentSearch] = usePersistentState<string>("lb.agentSearch", "");
   const [teamFilter, setTeamFilter] = usePersistentState<string>("lb.team", "all");
@@ -147,8 +147,8 @@ function LeaderboardsPage() {
       if (leadSourceFilter !== "all" && (s.lead_source ?? "") !== leadSourceFilter) return false;
       if (addonFilter !== "all") {
         if (addonFilter === "__none") {
-          if ((s.add_ons?.length ?? 0) > 0) return false;
-        } else if (!s.add_ons?.includes(addonFilter)) return false;
+          if (saleHasAddon(s)) return false;
+        } else if (!saleHasAddon(s, addonFilter)) return false;
       }
       return true;
     });

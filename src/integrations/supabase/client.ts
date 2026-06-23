@@ -188,6 +188,7 @@ class QueryBuilder implements PromiseLike<QueryResult<any[]>> {
   private values: unknown = undefined;
   private onConflict: string | undefined;
   private filters: Filter[] = [];
+  private orFilters: string[] = [];
   private orders: Order[] = [];
   private limitCount: number | undefined;
   private wantSingle: "maybe" | "strict" | null = null;
@@ -291,6 +292,12 @@ class QueryBuilder implements PromiseLike<QueryResult<any[]>> {
     return this;
   }
 
+  /** PostgREST-style OR: .or("name.ilike.%x%,email.ilike.%x%") */
+  or(filters: string) {
+    this.orFilters.push(filters);
+    return this;
+  }
+
   order(column: string, opts?: { ascending?: boolean; nullsFirst?: boolean }) {
     this.orders.push({
       column,
@@ -319,6 +326,7 @@ class QueryBuilder implements PromiseLike<QueryResult<any[]>> {
     const params = new URLSearchParams();
     if (this.action === "select" || this.returnRows) params.set("select", this.columns);
     for (const f of this.filters) params.append(f.column, `${f.op}.${f.value}`);
+    for (const o of this.orFilters) params.append("or", `(${o})`);
     for (const o of this.orders) {
       let v = `${o.column}.${o.ascending ? "asc" : "desc"}`;
       if (o.nullsFirst !== undefined) v += o.nullsFirst ? ".nullsfirst" : ".nullslast";

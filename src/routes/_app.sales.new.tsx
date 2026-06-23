@@ -5,6 +5,13 @@ import { CheckCircle2, Loader2, Plus, PlusCircle, Trash2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { generateSaleId, formatCurrency } from "@/lib/sales";
+import {
+  endOfDayEastern,
+  formatSaleDateTime,
+  fromDatetimeLocalValue,
+  toDatetimeLocalValue,
+} from "@/lib/timezone";
+import { notifySalesChanged } from "@/lib/sales-events";
 import { updateGhlContactFromSale } from "@/lib/ghl.functions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,6 +19,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CustomerAutocomplete } from "@/components/CustomerAutocomplete";
+import { ReportingOnlyField } from "@/components/ReportingOnlyField";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_app/sales/new")({
@@ -84,11 +92,12 @@ function SalesEntryPage() {
   const [confirmation, setConfirmation] = useState<{ sale_id: string; date: string } | null>(null);
   const [errors, setErrors] = useState<Record<string, string | undefined>>({});
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
+  const [reportingOnly, setReportingOnly] = useState(false);
 
   const [form, setForm] = useState<FormState>({
     agent_name: "",
     team_id: "",
-    sale_date: new Date().toISOString().slice(0, 16),
+    sale_date: toDatetimeLocalValue(),
     customer_name: "",
     line_items: [newLineItem()],
     lead_source: "",
@@ -122,6 +131,13 @@ function SalesEntryPage() {
       }));
     }
   }, [profile]);
+
+  const onReportingOnlyChange = (checked: boolean) => {
+    setReportingOnly(checked);
+    if (checked) {
+      setForm((f) => ({ ...f, sale_date: f.sale_date || toDatetimeLocalValue() }));
+    }
+  };
 
   const update = <K extends keyof FormState>(key: K, val: FormState[K]) =>
     setForm((f) => ({ ...f, [key]: val }));
@@ -159,7 +175,7 @@ function SalesEntryPage() {
     e.preventDefault();
     if (!user) return;
 
-    if (!selectedContactId) {
+    if (!reportingOnly && !selectedContactId) {
       toast.error("Please select a contact from the suggestions before submitting.");
       return;
     }
@@ -193,7 +209,7 @@ function SalesEntryPage() {
     const parsed = schema.safeParse({
       agent_name: form.agent_name,
       team_id: form.team_id || null,
-      sale_date: form.sale_date,
+      sale_date: reportingOnly ? form.sale_date : toDatetimeLocalValue(),
       customer_name: form.customer_name,
       line_items: normalizedItems,
       lead_source: form.lead_source || undefined,
@@ -210,7 +226,16 @@ function SalesEntryPage() {
     setErrors({});
     setSubmitting(true);
 
-    const sale_id = generateSaleId(new Date(parsed.data.sale_date));
+    const saleInstant = reportingOnly
+      ? fromDatetimeLocalValue(parsed.data.sale_date)
+      : new Date();
+    if (reportingOnly && saleInstant.getTime() > endOfDayEastern().getTime()) {
+      setSubmitting(false);
+      toast.error("Sale date cannot be after today in the reporting timezone.");
+      return;
+    }
+
+    const sale_id = generateSaleId(saleInstant);
     const team = teams.find((t) => t.id === parsed.data.team_id);
     const dealSize = parsed.data.line_items.reduce((s, li) => s + li.amount, 0);
     const first = parsed.data.line_items[0];
@@ -221,8 +246,9 @@ function SalesEntryPage() {
       agent_name: parsed.data.agent_name,
       team_id: parsed.data.team_id ?? null,
       team_name: team?.name ?? null,
-      sale_date: new Date(parsed.data.sale_date).toISOString(),
+      sale_date: saleInstant.toISOString(),
       customer_name: parsed.data.customer_name,
+      ghl_contact_id: reportingOnly ? null : selectedContactId,
       deal_size: dealSize,
       carrier: first.carrier || (first.kind === "addon" ? "Add-on" : ""),
       product: first.product,
@@ -231,6 +257,7 @@ function SalesEntryPage() {
       line_items: parsed.data.line_items,
       lead_source: parsed.data.lead_source ?? null,
       notes: parsed.data.notes ?? null,
+      reporting_only: reportingOnly,
     });
 
     if (error) {
@@ -239,30 +266,35 @@ function SalesEntryPage() {
       return;
     }
 
-    // Update GHL contact custom fields based on the sale
-    try {
-      const accessToken = session?.access_token;
-      if (accessToken && selectedContactId) {
-        await updateGhlFn({
-          data: {
-            accessToken,
-            contactId: selectedContactId,
-            lineItems: parsed.data.line_items.map((li) => ({
-              kind: li.kind,
-              carrier: li.carrier,
-              product: li.product,
-            })),
-          },
-        });
+    // Update GHL contact custom fields based on the sale (skip when reporting only).
+    if (!reportingOnly) {
+      try {
+        const accessToken = session?.access_token;
+        if (accessToken && selectedContactId) {
+          await updateGhlFn({
+            data: {
+              accessToken,
+              contactId: selectedContactId,
+              lineItems: parsed.data.line_items.map((li) => ({
+                kind: li.kind,
+                carrier: li.carrier,
+                product: li.product,
+                amount: li.amount,
+              })),
+            },
+          });
+        }
+      } catch (err) {
+        console.error("[GHL update]", err);
+        toast.warning("Sale saved, but failed to update GHL contact fields.");
       }
-    } catch (err) {
-      console.error("[GHL update]", err);
-      toast.warning("Sale saved, but failed to update GHL contact fields.");
     }
 
     setSubmitting(false);
     setSelectedContactId(null);
-    setConfirmation({ sale_id, date: new Date().toLocaleString() });
+    setReportingOnly(false);
+    notifySalesChanged();
+    setConfirmation({ sale_id, date: formatSaleDateTime(saleInstant) });
   };
 
   const resetForm = () => {
@@ -273,8 +305,9 @@ function SalesEntryPage() {
       line_items: [newLineItem()],
       lead_source: "",
       notes: "",
-      sale_date: new Date().toISOString().slice(0, 16),
+      sale_date: toDatetimeLocalValue(),
     });
+    setReportingOnly(false);
   };
 
   if (confirmation) {
@@ -328,9 +361,6 @@ function SalesEntryPage() {
               disabled
             />
           </Field>
-          <Field label="Date of sale" error={errors.sale_date}>
-            <Input type="datetime-local" value={form.sale_date} onChange={(e) => update("sale_date", e.target.value)} />
-          </Field>
           <Field label="Customer name" error={errors.customer_name}>
             <CustomerAutocomplete
               value={form.customer_name}
@@ -342,6 +372,16 @@ function SalesEntryPage() {
               placeholder="Search a contact…"
             />
           </Field>
+          <ReportingOnlyField checked={reportingOnly} onCheckedChange={onReportingOnlyChange} />
+          {reportingOnly && (
+            <Field label="Date of sale" error={errors.sale_date}>
+              <Input
+                type="datetime-local"
+                value={form.sale_date}
+                onChange={(e) => update("sale_date", e.target.value)}
+              />
+            </Field>
+          )}
         </Section>
 
         <div>

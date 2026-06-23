@@ -12,6 +12,8 @@ export interface ExpenseRow {
   updated_at: string;
 }
 
+import { easternDateString } from "@/lib/timezone";
+
 /**
  * Fetch expenses overlapping [from, to]. Optionally restrict to a single agent.
  */
@@ -20,8 +22,8 @@ export async function fetchExpensesInRange(
   to: Date,
   opts?: { agentId?: string },
 ): Promise<ExpenseRow[]> {
-  const fromStr = from.toISOString().slice(0, 10);
-  const toStr = to.toISOString().slice(0, 10);
+  const fromStr = easternDateString(from);
+  const toStr = easternDateString(to);
   let q = supabase
     .from("expenses")
     .select("*")

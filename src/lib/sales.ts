@@ -29,10 +29,14 @@ export const LEAD_SOURCES = [
   "Social Media",
 ];
 
+import { formatInTimeZone } from "date-fns-tz";
+import { getReportingTimezone } from "@/lib/timezone";
+
 export function generateSaleId(d = new Date()): string {
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
+  const zone = getReportingTimezone();
+  const yyyy = formatInTimeZone(d, zone, "yyyy");
+  const mm = formatInTimeZone(d, zone, "MM");
+  const dd = formatInTimeZone(d, zone, "dd");
   const rand = Math.floor(100000 + Math.random() * 900000);
   return `SALE-${yyyy}${mm}${dd}-${rand}`;
 }
@@ -68,6 +72,7 @@ export interface SaleRow {
   team_name: string | null;
   sale_date: string;
   customer_name: string | null;
+  ghl_contact_id?: string | null;
   deal_size: number;
   carrier: string;
   product: string;
@@ -75,5 +80,6 @@ export interface SaleRow {
   lead_source: string | null;
   cost_per_lead: number | null;
   notes: string | null;
+  reporting_only?: boolean;
   line_items?: SaleLineItem[] | null;
 }

@@ -377,6 +377,7 @@ export type Database = {
           created_at: string
           customer_name: string | null
           deal_size: number | null
+          ghl_contact_id: string | null
           id: string
           lead_source: string | null
           line_items: Json
@@ -397,6 +398,7 @@ export type Database = {
           created_at?: string
           customer_name?: string | null
           deal_size?: number | null
+          ghl_contact_id?: string | null
           id?: string
           lead_source?: string | null
           line_items?: Json
@@ -417,6 +419,7 @@ export type Database = {
           created_at?: string
           customer_name?: string | null
           deal_size?: number | null
+          ghl_contact_id?: string | null
           id?: string
           lead_source?: string | null
           line_items?: Json

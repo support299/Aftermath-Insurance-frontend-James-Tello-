@@ -1,6 +1,21 @@
-import { addDays, endOfDay, format, startOfDay, startOfMonth, startOfWeek, startOfYear, subDays, differenceInCalendarDays } from "date-fns";
+import { format } from "date-fns";
 import type { SaleRow } from "@/lib/sales";
 import type { ExpenseRow } from "@/lib/expenses";
+import {
+  addReportingCalendarDays,
+  easternDateKey,
+  easternEndFromCalendarDate,
+  easternHour,
+  easternStartFromCalendarDate,
+  endOfDayEastern,
+  getReportingTimezone,
+  startOfDayEastern,
+  startOfMonthEastern,
+  startOfWeekEastern,
+  startOfYearEastern,
+  subDaysEastern,
+} from "@/lib/timezone";
+import { fromZonedTime } from "date-fns-tz";
 
 export type DateRangeKey = "today" | "week" | "month" | "ytd" | "30d" | "90d" | "all" | "custom";
 
@@ -9,18 +24,29 @@ export function rangeFromKey(
   custom?: { from?: Date | null; to?: Date | null },
 ): { from: Date; to: Date } {
   const now = new Date();
-  const to = now;
+  // Include all of today's sales in the reporting timezone, even if sale_date
+  // is later today than the current clock (avoids missing same-day entries).
+  const to = endOfDayEastern(now);
   switch (key) {
-    case "today": return { from: startOfDay(now), to };
-    case "week": return { from: startOfWeek(now, { weekStartsOn: 1 }), to };
-    case "month": return { from: startOfMonth(now), to };
-    case "ytd": return { from: startOfYear(now), to };
-    case "30d": return { from: subDays(now, 30), to };
-    case "90d": return { from: subDays(now, 90), to };
-    case "all": return { from: new Date(2000, 0, 1), to };
+    case "today":
+      return { from: startOfDayEastern(now), to };
+    case "week":
+      return { from: startOfWeekEastern(now), to };
+    case "month":
+      return { from: startOfMonthEastern(now), to };
+    case "ytd":
+      return { from: startOfYearEastern(now), to };
+    case "30d":
+      return { from: subDaysEastern(30, now), to };
+    case "90d":
+      return { from: subDaysEastern(90, now), to };
+    case "all":
+      return { from: fromZonedTime("2000-01-01T00:00:00.000", getReportingTimezone()), to };
     case "custom": {
-      const from = custom?.from ? startOfDay(custom.from) : startOfDay(subDays(now, 7));
-      const t = custom?.to ? endOfDay(custom.to) : endOfDay(now);
+      const from = custom?.from
+        ? easternStartFromCalendarDate(custom.from)
+        : subDaysEastern(7, now);
+      const t = custom?.to ? easternEndFromCalendarDate(custom.to) : endOfDayEastern(now);
       return { from, to: t };
     }
   }
@@ -110,8 +136,21 @@ export interface TrendPoint {
   totalCost: number;
 }
 
+function easternDayCount(from: Date, to: Date): number {
+  const start = easternDateKey(from);
+  const end = easternDateKey(to);
+  let count = 0;
+  let ymd = start;
+  while (ymd <= end) {
+    count++;
+    if (ymd === end) break;
+    ymd = addReportingCalendarDays(ymd, 1);
+  }
+  return Math.max(1, count);
+}
+
 export function buildTrend(sales: SaleRow[], from: Date, to: Date, expenses: ExpenseRow[] = []): TrendPoint[] {
-  const days = Math.max(1, Math.ceil((to.getTime() - from.getTime()) / (1000 * 60 * 60 * 24)));
+  const days = easternDayCount(from, to);
   const buckets = new Map<string, { revenue: number; count: number; life: number; health: number; expense: number }>();
   const mk = () => ({ revenue: 0, count: 0, life: 0, health: 0, expense: 0 });
 
@@ -126,7 +165,7 @@ export function buildTrend(sales: SaleRow[], from: Date, to: Date, expenses: Exp
 
   if (days <= 1) {
     for (let h = 0; h < 24; h++) buckets.set(`${h}`, mk());
-    sales.forEach((s) => addSale(`${new Date(s.sale_date).getHours()}`, s));
+    sales.forEach((s) => addSale(`${easternHour(s.sale_date)}`, s));
     const totalExpense = expenses.reduce((s, e) => s + Number(e.amount), 0);
     const perHour = totalExpense / 24;
     buckets.forEach((b) => { b.expense = perHour; });
@@ -141,28 +180,40 @@ export function buildTrend(sales: SaleRow[], from: Date, to: Date, expenses: Exp
     }));
   }
 
-  const start = startOfDay(from);
-  for (let i = 0; i <= days; i++) {
-    const d = addDays(start, i);
-    buckets.set(format(d, "yyyy-MM-dd"), mk());
+  let ymd = easternDateKey(from);
+  const endYmd = easternDateKey(to);
+  while (ymd <= endYmd) {
+    buckets.set(ymd, mk());
+    if (ymd === endYmd) break;
+    ymd = addReportingCalendarDays(ymd, 1);
   }
-  sales.forEach((s) => addSale(format(new Date(s.sale_date), "yyyy-MM-dd"), s));
+
+  sales.forEach((s) => addSale(easternDateKey(s.sale_date), s));
 
   // Allocate each expense evenly across the days in its [start_date, end_date] range
   expenses.forEach((e) => {
-    const eStart = startOfDay(new Date(e.start_date));
-    const eEnd = startOfDay(new Date(e.end_date));
-    const span = Math.max(1, differenceInCalendarDays(eEnd, eStart) + 1);
+    const eStart = easternDateKey(e.start_date);
+    const eEnd = easternDateKey(e.end_date);
+    let cursor = eStart;
+    let span = 0;
+    while (cursor <= eEnd) {
+      span++;
+      if (cursor === eEnd) break;
+      cursor = addReportingCalendarDays(cursor, 1);
+    }
+    span = Math.max(1, span);
     const perDay = Number(e.amount) / span;
-    for (let i = 0; i < span; i++) {
-      const k = format(addDays(eStart, i), "yyyy-MM-dd");
-      const b = buckets.get(k);
+    cursor = eStart;
+    while (cursor <= eEnd) {
+      const b = buckets.get(cursor);
       if (b) b.expense += perDay;
+      if (cursor === eEnd) break;
+      cursor = addReportingCalendarDays(cursor, 1);
     }
   });
 
   return [...buckets.entries()].map(([k, v]) => ({
-    date: format(new Date(k), "MMM d"),
+    date: format(new Date(`${k}T12:00:00`), "MMM d"),
     revenue: v.revenue,
     count: v.count,
     life: v.life,

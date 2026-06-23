@@ -1,6 +1,7 @@
 import { Outlet, Link, createRootRoute } from "@tanstack/react-router";
 import { Toaster } from "@/components/ui/sonner";
 import { AuthProvider } from "@/lib/auth";
+import { CompanySettingsProvider } from "@/lib/company-settings";
 import { AutoLoginHandler } from "@/components/AutoLoginHandler";
 
 function NotFoundComponent() {
@@ -62,9 +63,11 @@ export const Route = createRootRoute({
 function RootComponent() {
   return (
     <AuthProvider>
-      <AutoLoginHandler />
-      <Outlet />
-      <Toaster richColors position="top-right" />
+      <CompanySettingsProvider>
+        <AutoLoginHandler />
+        <Outlet />
+        <Toaster richColors position="top-right" />
+      </CompanySettingsProvider>
     </AuthProvider>
   );
 }
