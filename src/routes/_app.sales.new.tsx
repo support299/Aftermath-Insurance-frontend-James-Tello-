@@ -275,12 +275,25 @@ function SalesEntryPage() {
             data: {
               accessToken,
               contactId: selectedContactId,
-              lineItems: parsed.data.line_items.map((li) => ({
-                kind: li.kind,
-                carrier: li.carrier,
-                product: li.product,
-                amount: li.amount,
-              })),
+              lineItems: form.line_items
+                .filter((li) => li.kind)
+                .map((li) => {
+                  const monthly =
+                    li.monthly_premium !== "" && isFinite(Number(li.monthly_premium))
+                      ? Number(li.monthly_premium)
+                      : li.amount !== "" && isFinite(Number(li.amount))
+                        ? +(Number(li.amount) / 12).toFixed(2)
+                        : undefined;
+                  return {
+                    kind: li.kind as LineKind,
+                    carrier: li.carrier,
+                    product: li.product,
+                    amount: Number(li.amount),
+                    ...(li.kind === "health" || li.kind === "life"
+                      ? { monthlyPremium: monthly }
+                      : {}),
+                  };
+                }),
             },
           });
         }

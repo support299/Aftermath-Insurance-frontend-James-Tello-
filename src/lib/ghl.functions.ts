@@ -57,6 +57,7 @@ export const updateGhlContactFromSale = async (opts: {
       carrier: string;
       product: string;
       amount?: number;
+      monthlyPremium?: number;
     }[];
   };
 }): Promise<{ success: boolean; updated: number }> =>

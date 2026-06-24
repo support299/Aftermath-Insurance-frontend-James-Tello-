@@ -3,6 +3,9 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
     <title>Performance Dashboard</title>
     <meta
       name="description"
@@ -32,6 +35,35 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- Runs before the app bundle; fixes white screen when cached HTML points at deleted /assets/* files -->
+    <script>
+      (function () {
+        var K = "app-chunk-reload";
+        var P = "_cb";
+        function bustReload() {
+          if (sessionStorage.getItem(K)) return;
+          sessionStorage.setItem(K, "1");
+          var u = new URL(location.href);
+          u.searchParams.set(P, String(Date.now()));
+          location.replace(u.toString());
+        }
+        window.addEventListener(
+          "error",
+          function (e) {
+            var t = e.target;
+            if (!t) return;
+            var href = t.src || t.href || "";
+            if (
+              (t.tagName === "SCRIPT" || t.tagName === "LINK") &&
+              href.indexOf("/assets/") !== -1
+            ) {
+              bustReload();
+            }
+          },
+          true,
+        );
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

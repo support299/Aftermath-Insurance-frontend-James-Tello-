@@ -35,11 +35,26 @@ interface LineItem {
   kind: LineKind | "";
   carrier: string;
   product: string;
+  monthly_premium: string;
   amount: string;
 }
 
 function newLineItem(): LineItem {
-  return { id: crypto.randomUUID(), kind: "", carrier: "", product: "", amount: "" };
+  return {
+    id: crypto.randomUUID(),
+    kind: "",
+    carrier: "",
+    product: "",
+    monthly_premium: "",
+    amount: "",
+  };
+}
+
+function monthlyFromAmount(amount: unknown): string {
+  if (amount == null || amount === "") return "";
+  const n = Number(amount);
+  if (!isFinite(n)) return "";
+  return String(+(n / 12).toFixed(2));
 }
 
 function SalesEditPage() {
@@ -103,12 +118,18 @@ function SalesEditPage() {
             const carrier = String(it.carrier ?? "");
             const product = String(it.product ?? "");
             const kind = (it.kind as LineKind | undefined) || inferKind(carrier, product);
+            const amountStr = it.amount != null ? String(it.amount) : "";
+            const monthlyStr =
+              it.monthly_premium != null && it.monthly_premium !== ""
+                ? String(it.monthly_premium)
+                : monthlyFromAmount(it.amount);
             return {
               id: crypto.randomUUID(),
               kind,
               carrier: kind === "addon" ? "" : carrier,
               product,
-              amount: it.amount != null ? String(it.amount) : "",
+              monthly_premium: monthlyStr,
+              amount: amountStr,
             };
           }),
         );
@@ -120,6 +141,7 @@ function SalesEditPage() {
             kind,
             carrier: kind === "addon" ? "" : (s.carrier ?? ""),
             product: s.product ?? "",
+            monthly_premium: monthlyFromAmount(s.deal_size),
             amount: s.deal_size != null ? String(s.deal_size) : "",
           },
         ]);
@@ -225,12 +247,24 @@ function SalesEditPage() {
             data: {
               accessToken,
               contactId: ghlContactId,
-              lineItems: normalized.map((li) => ({
-                kind: li.kind,
-                carrier: li.carrier,
-                product: li.product,
-                amount: li.amount,
-              })),
+              lineItems: lineItems
+                .filter((li) => li.kind)
+                .map((li) => {
+                  const amount = Number(li.amount);
+                  const monthly =
+                    li.monthly_premium !== "" && isFinite(Number(li.monthly_premium))
+                      ? Number(li.monthly_premium)
+                      : +(amount / 12).toFixed(2);
+                  return {
+                    kind: li.kind as LineKind,
+                    carrier: li.carrier,
+                    product: li.product,
+                    amount,
+                    ...(li.kind === "health" || li.kind === "life"
+                      ? { monthlyPremium: monthly }
+                      : {}),
+                  };
+                }),
             },
           });
         }
@@ -345,6 +379,11 @@ function SalesEditPage() {
                 onKindChange={(v) => updateLine(li.id, { kind: v, carrier: "", product: "" })}
                 onCarrierChange={(v) => updateLine(li.id, { carrier: v, product: "" })}
                 onProductChange={(v) => updateLine(li.id, { product: v })}
+                onMonthlyPremiumChange={(v) => {
+                  const n = Number(v);
+                  const annual = v === "" || !isFinite(n) ? "" : String(+(n * 12).toFixed(2));
+                  updateLine(li.id, { monthly_premium: v, amount: annual });
+                }}
                 onAmountChange={(v) => updateLine(li.id, { amount: v })}
                 onRemove={() => removeLine(li.id)}
               />
@@ -400,6 +439,7 @@ function LineItemRow({
   onKindChange,
   onCarrierChange,
   onProductChange,
+  onMonthlyPremiumChange,
   onAmountChange,
   onRemove,
 }: {
@@ -412,6 +452,7 @@ function LineItemRow({
   onKindChange: (v: LineKind) => void;
   onCarrierChange: (v: string) => void;
   onProductChange: (v: string) => void;
+  onMonthlyPremiumChange: (v: string) => void;
   onAmountChange: (v: string) => void;
   onRemove: () => void;
 }) {
@@ -465,7 +506,7 @@ function LineItemRow({
           </div>
         )}
       </div>
-      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-[1fr_140px]">
+      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-[1fr_140px_140px]">
         <div>
           <Label className="mb-1 block text-xs">{isAddon ? "Add-on" : "Product"}</Label>
           <Select
@@ -492,6 +533,19 @@ function LineItemRow({
           </Select>
         </div>
         <div>
+          <Label className="mb-1 block text-xs">Monthly Premium ($)</Label>
+          <Input
+            type="number"
+            inputMode="decimal"
+            min="0"
+            step="0.01"
+            placeholder="0.00"
+            value={item.monthly_premium}
+            onChange={(e) => onMonthlyPremiumChange(e.target.value)}
+            disabled={!item.product}
+          />
+        </div>
+        <div>
           <Label className="mb-1 block text-xs">Annual Premium ($)</Label>
           <Input
             type="number"
@@ -501,6 +555,8 @@ function LineItemRow({
             placeholder="0.00"
             value={item.amount}
             onChange={(e) => onAmountChange(e.target.value)}
+            readOnly
+            title="Auto-calculated as Monthly Premium × 12"
           />
         </div>
       </div>
