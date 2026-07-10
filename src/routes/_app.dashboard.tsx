@@ -149,8 +149,8 @@ function DashboardPage() {
       if (search) {
         const q = search.toLowerCase();
         if (
-          !s.sale_id.toLowerCase().includes(q) &&
-          !s.agent_name.toLowerCase().includes(q) &&
+          !(s.sale_id ?? "").toLowerCase().includes(q) &&
+          !(s.agent_name ?? "").toLowerCase().includes(q) &&
           !(s.customer_name?.toLowerCase().includes(q) ?? false)
         ) return false;
       }

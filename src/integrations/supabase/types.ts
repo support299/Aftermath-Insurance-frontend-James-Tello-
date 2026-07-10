@@ -296,6 +296,8 @@ export type Database = {
       products: {
         Row: {
           active: boolean
+          additional_includes: string | null
+          additional_price: number | null
           carrier_id: string | null
           created_at: string
           id: string
@@ -303,6 +305,8 @@ export type Database = {
         }
         Insert: {
           active?: boolean
+          additional_includes?: string | null
+          additional_price?: number | null
           carrier_id?: string | null
           created_at?: string
           id?: string
@@ -310,6 +314,8 @@ export type Database = {
         }
         Update: {
           active?: boolean
+          additional_includes?: string | null
+          additional_price?: number | null
           carrier_id?: string | null
           created_at?: string
           id?: string

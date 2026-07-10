@@ -24,6 +24,9 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
+import { PRODUCT_ADDITIONAL_PRICING_ENABLED } from "@/lib/feature-flags";
+import { GamificationSettingsPanel } from "@/components/settings/GamificationSettingsPanel";
+import { ManagerContestsPanel } from "@/components/settings/ManagerContestsPanel";
 import type { AppRole } from "@/lib/auth";
 
 export const Route = createFileRoute("/_app/settings")({
@@ -48,11 +51,14 @@ interface NamedRow {
 }
 interface ProductRow extends NamedRow {
   carrier_id: string | null;
+  additional_price: number | null;
+  additional_includes: string | null;
 }
 
 function SettingsPage() {
   const { roles, loading: authLoading } = useAuth();
   const isAdmin = roles.includes("admin");
+  const isManager = roles.includes("manager");
 
   if (authLoading) {
     return (
@@ -69,13 +75,17 @@ function SettingsPage() {
           <KeyRound className="h-6 w-6 text-primary" />
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-            <p className="text-sm text-muted-foreground">Manage your password.</p>
+            <p className="text-sm text-muted-foreground">
+              {isManager ? "Manage your team contests and password." : "Manage your password."}
+            </p>
           </div>
         </div>
-        <Tabs defaultValue="password" className="space-y-4">
+        <Tabs defaultValue={isManager ? "contests" : "password"} className="space-y-4">
           <TabsList>
+            {isManager && <TabsTrigger value="contests">Contests</TabsTrigger>}
             <TabsTrigger value="password">Password</TabsTrigger>
           </TabsList>
+          {isManager && <TabsContent value="contests"><ManagerContestsPanel /></TabsContent>}
           <TabsContent value="password"><PasswordPanel /></TabsContent>
         </Tabs>
       </div>
@@ -89,7 +99,7 @@ function SettingsPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Admin Settings</h1>
           <p className="text-sm text-muted-foreground">
-            Manage users, teams, carriers, and products.
+            Manage users, teams, carriers, products, and performance programs.
           </p>
         </div>
       </div>
@@ -103,6 +113,7 @@ function SettingsPage() {
           <TabsTrigger value="addons">Add-ons</TabsTrigger>
           <TabsTrigger value="lead_sources">Lead Sources</TabsTrigger>
           <TabsTrigger value="targets">Targets</TabsTrigger>
+          <TabsTrigger value="gamification">Performance & Rewards</TabsTrigger>
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="password">Password</TabsTrigger>
         </TabsList>
@@ -114,6 +125,7 @@ function SettingsPage() {
         <TabsContent value="addons"><NamedListPanel table="add_ons" label="Add-on" /></TabsContent>
         <TabsContent value="lead_sources"><NamedListPanel table="lead_sources" label="Lead Source" /></TabsContent>
         <TabsContent value="targets"><TargetsPanel /></TabsContent>
+        <TabsContent value="gamification"><GamificationSettingsPanel /></TabsContent>
         <TabsContent value="general"><ReportingTimezonePanel /></TabsContent>
         <TabsContent value="password"><PasswordPanel /></TabsContent>
       </Tabs>
@@ -890,7 +902,7 @@ function ProductsPanel() {
     setLoading(true);
     const [{ data: c }, { data: p }] = await Promise.all([
       supabase.from("carriers").select("id, name, active").order("name"),
-      supabase.from("products").select("id, name, active, carrier_id").order("name"),
+      supabase.from("products").select("id, name, active, carrier_id, additional_price, additional_includes").order("name"),
     ]);
     setCarriers((c ?? []) as NamedRow[]);
     setProducts((p ?? []) as ProductRow[]);
@@ -939,6 +951,20 @@ function ProductsPanel() {
     const { error } = await supabase.from("products").delete().eq("id", id);
     if (error) return toast.error(error.message);
     toast.success("Product removed");
+    load();
+  };
+
+  const updatePricing = async (
+    id: string,
+    additional_price: number | null,
+    additional_includes: string | null,
+  ) => {
+    const { error } = await supabase
+      .from("products")
+      .update({ additional_price, additional_includes })
+      .eq("id", id);
+    if (error) return toast.error(error.message);
+    toast.success("Product pricing updated");
     load();
   };
 
@@ -998,7 +1024,15 @@ function ProductsPanel() {
             <TableHeader>
               <TableRow>
                 <TableHead>Name</TableHead>
-                <TableHead className="w-[180px]">Carrier</TableHead>
+                <TableHead className={PRODUCT_ADDITIONAL_PRICING_ENABLED ? "w-[160px]" : "w-[180px]"}>
+                  Carrier
+                </TableHead>
+                {PRODUCT_ADDITIONAL_PRICING_ENABLED && (
+                  <>
+                    <TableHead className="w-[130px]">Add&apos;l price/mo</TableHead>
+                    <TableHead>Includes</TableHead>
+                  </>
+                )}
                 <TableHead className="w-[120px]">Active</TableHead>
                 <TableHead className="w-[100px] text-right">Actions</TableHead>
               </TableRow>
@@ -1012,12 +1046,24 @@ function ProductsPanel() {
                   carrierMap={carrierMap}
                   onRename={(n) => rename(r.id, n)}
                   onReassign={(cid) => reassign(r.id, cid)}
+                  onUpdatePricing={
+                    PRODUCT_ADDITIONAL_PRICING_ENABLED
+                      ? (price, includes) => updatePricing(r.id, price, includes)
+                      : undefined
+                  }
                   onToggle={() => toggle(r)}
                   onDelete={() => remove(r.id)}
                 />
               ))}
               {visible.length === 0 && (
-                <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground py-6">No products for this carrier</TableCell></TableRow>
+                <TableRow>
+                  <TableCell
+                    colSpan={PRODUCT_ADDITIONAL_PRICING_ENABLED ? 6 : 4}
+                    className="text-center text-muted-foreground py-6"
+                  >
+                    No products for this carrier
+                  </TableCell>
+                </TableRow>
               )}
             </TableBody>
           </Table>
@@ -1028,24 +1074,51 @@ function ProductsPanel() {
 }
 
 function ProductRowEditor({
-  row, carriers, carrierMap, onRename, onReassign, onToggle, onDelete,
+  row, carriers, carrierMap, onRename, onReassign, onUpdatePricing, onToggle, onDelete,
 }: {
   row: ProductRow;
   carriers: NamedRow[];
   carrierMap: Map<string, string>;
   onRename: (name: string) => void;
   onReassign: (carrierId: string) => void;
+  onUpdatePricing?: (price: number | null, includes: string | null) => void;
   onToggle: () => void;
   onDelete: () => void;
 }) {
   const [name, setName] = useState(row.name);
-  const dirty = name !== row.name;
+  const [additionalPrice, setAdditionalPrice] = useState(
+    row.additional_price != null ? String(row.additional_price) : "",
+  );
+  const [additionalIncludes, setAdditionalIncludes] = useState(row.additional_includes ?? "");
+  const nameDirty = name !== row.name;
+  const pricingDirty =
+    PRODUCT_ADDITIONAL_PRICING_ENABLED &&
+    (additionalPrice !== (row.additional_price != null ? String(row.additional_price) : "") ||
+      additionalIncludes !== (row.additional_includes ?? ""));
+
+  useEffect(() => {
+    setName(row.name);
+    setAdditionalPrice(row.additional_price != null ? String(row.additional_price) : "");
+    setAdditionalIncludes(row.additional_includes ?? "");
+  }, [row]);
+
+  const savePricing = () => {
+    if (!onUpdatePricing) return;
+    const trimmed = additionalPrice.trim();
+    const price = trimmed === "" ? null : Number(trimmed);
+    if (trimmed !== "" && (!isFinite(price!) || price! < 0)) {
+      toast.error("Enter a valid additional price");
+      return;
+    }
+    onUpdatePricing(price, additionalIncludes.trim() || null);
+  };
+
   return (
     <TableRow>
       <TableCell>
         <div className="flex gap-2">
           <Input value={name} onChange={(e) => setName(e.target.value)} />
-          {dirty && <Button size="sm" onClick={() => onRename(name)}><Save className="h-4 w-4" /></Button>}
+          {nameDirty && <Button size="sm" onClick={() => onRename(name)}><Save className="h-4 w-4" /></Button>}
         </div>
       </TableCell>
       <TableCell>
@@ -1056,6 +1129,33 @@ function ProductRowEditor({
           </SelectContent>
         </Select>
       </TableCell>
+      {PRODUCT_ADDITIONAL_PRICING_ENABLED && (
+        <>
+          <TableCell>
+            <Input
+              type="number"
+              inputMode="decimal"
+              min="0"
+              step="0.01"
+              placeholder="—"
+              value={additionalPrice}
+              onChange={(e) => setAdditionalPrice(e.target.value)}
+            />
+          </TableCell>
+          <TableCell>
+            <div className="flex gap-2">
+              <Input
+                placeholder="What's included…"
+                value={additionalIncludes}
+                onChange={(e) => setAdditionalIncludes(e.target.value)}
+              />
+              {pricingDirty && (
+                <Button size="sm" onClick={savePricing}><Save className="h-4 w-4" /></Button>
+              )}
+            </div>
+          </TableCell>
+        </>
+      )}
       <TableCell>
         <div className="flex items-center gap-2">
           <Switch checked={row.active} onCheckedChange={onToggle} />

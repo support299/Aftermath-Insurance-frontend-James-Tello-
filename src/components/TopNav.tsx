@@ -1,19 +1,22 @@
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
-import { LayoutDashboard, Trophy, LogOut, Settings, Users, Receipt, Wallet } from "lucide-react";
+import { LayoutDashboard, Trophy, LogOut, Settings, Users, Receipt, Wallet, Sparkles } from "lucide-react";
 import { useAuth, highestRole } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { fetchMyProgress, type AgentProgress } from "@/lib/gamification";
+import { LevelBadge } from "@/components/gamification/LevelBadge";
 import logo from "@/assets/aftermath-logo.png";
 
 export function TopNav() {
-  const { profile, roles, signOut, user } = useAuth();
+  const { profile, roles, signOut, user, session } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const role = highestRole(roles);
   const canManage = roles.includes("admin") || roles.includes("manager");
   const [ghlUserId, setGhlUserId] = useState<string | null>(null);
+  const [myProgress, setMyProgress] = useState<AgentProgress | null>(null);
   useEffect(() => {
     if (!user?.id) { setGhlUserId(null); return; }
     let cancelled = false;
@@ -25,9 +28,22 @@ export function TopNav() {
       .then(({ data }) => { if (!cancelled) setGhlUserId(data?.id ?? null); });
     return () => { cancelled = true; };
   }, [user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) {
+      setMyProgress(null);
+      return;
+    }
+    let cancelled = false;
+    fetchMyProgress(session?.access_token)
+      .then((p) => { if (!cancelled) setMyProgress(p); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [user?.id, session?.access_token]);
   const items = [
     { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard } as const,
     { to: "/leaderboards", label: "Leaderboards", icon: Trophy } as const,
+    { to: "/incentives", label: "Incentives", icon: Sparkles } as const,
     ...(canManage ? [{ to: "/agents", label: "Agents", icon: Users } as const] : []),
     { to: "/sales", label: "Sales", icon: Receipt } as const,
     { to: "/expenses", label: "Expenses", icon: Wallet } as const,
@@ -74,6 +90,11 @@ export function TopNav() {
             <Badge variant="secondary" className="mt-0.5 text-[10px] uppercase tracking-wider">
               {role}
             </Badge>
+            {myProgress && myProgress.level_rank > 0 && (
+              <div className="mt-1">
+                <LevelBadge progress={myProgress} />
+              </div>
+            )}
           </div>
           <Button
             variant="ghost"

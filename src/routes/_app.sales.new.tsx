@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { z } from "zod";
-import { CheckCircle2, Loader2, Plus, PlusCircle, Trash2 } from "lucide-react";
+import { CheckCircle2, Loader2, Plus, PlusCircle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { generateSaleId, formatCurrency } from "@/lib/sales";
@@ -20,26 +20,26 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CustomerAutocomplete } from "@/components/CustomerAutocomplete";
 import { ReportingOnlyField } from "@/components/ReportingOnlyField";
+import { SaleLineItemRow } from "@/components/SaleLineItemRow";
 import { toast } from "sonner";
+import {
+  clearProductFields,
+  effectiveMonthlyPremium,
+  lineItemMonthlyPatch,
+  lineItemProductPatch,
+  newSaleLineItem,
+  serializeLineItem,
+  type LineKind,
+  type ProductWithPricing,
+  type SaleLineItem,
+} from "@/lib/line-items";
 
 export const Route = createFileRoute("/_app/sales/new")({
   component: SalesEntryPage,
 });
 
-type LineKind = "health" | "life" | "addon";
-
 interface CarrierOpt { id: string; name: string; carrier_type: string }
-interface ProductOpt { id: string; name: string; carrier_id: string | null }
 interface AddOnOpt { id: string; name: string }
-
-interface LineItem {
-  id: string;
-  kind: LineKind | "";
-  carrier: string;
-  product: string;
-  monthly_premium: string;
-  amount: string;
-}
 
 const lineItemSchema = z.object({
   kind: z.enum(["health", "life", "addon"]),
@@ -63,21 +63,10 @@ type FormState = {
   team_id: string;
   sale_date: string;
   customer_name: string;
-  line_items: LineItem[];
+  line_items: SaleLineItem[];
   lead_source: string;
   notes: string;
 };
-
-function newLineItem(): LineItem {
-  return {
-    id: crypto.randomUUID(),
-    kind: "",
-    carrier: "",
-    product: "",
-    monthly_premium: "",
-    amount: "",
-  };
-}
 
 function SalesEntryPage() {
   const { profile, user, session } = useAuth();
@@ -85,7 +74,7 @@ function SalesEntryPage() {
   const updateGhlFn = updateGhlContactFromSale;
   const [teams, setTeams] = useState<{ id: string; name: string }[]>([]);
   const [carriers, setCarriers] = useState<CarrierOpt[]>([]);
-  const [products, setProducts] = useState<ProductOpt[]>([]);
+  const [products, setProducts] = useState<ProductWithPricing[]>([]);
   const [addOns, setAddOns] = useState<AddOnOpt[]>([]);
   const [leadSources, setLeadSources] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
@@ -99,7 +88,7 @@ function SalesEntryPage() {
     team_id: "",
     sale_date: toDatetimeLocalValue(),
     customer_name: "",
-    line_items: [newLineItem()],
+    line_items: [newSaleLineItem()],
     lead_source: "",
     notes: "",
   });
@@ -111,8 +100,8 @@ function SalesEntryPage() {
     supabase.from("carriers").select("id, name, carrier_type").eq("active", true).order("name").then(({ data }) => {
       if (data) setCarriers(data as CarrierOpt[]);
     });
-    supabase.from("products").select("id, name, carrier_id").eq("active", true).order("name").then(({ data }) => {
-      if (data) setProducts(data);
+    supabase.from("products").select("id, name, carrier_id, additional_price, additional_includes").eq("active", true).order("name").then(({ data }) => {
+      if (data) setProducts(data as ProductWithPricing[]);
     });
     supabase.from("add_ons").select("id, name").eq("active", true).order("name").then(({ data }) => {
       if (data) setAddOns(data);
@@ -142,7 +131,7 @@ function SalesEntryPage() {
   const update = <K extends keyof FormState>(key: K, val: FormState[K]) =>
     setForm((f) => ({ ...f, [key]: val }));
 
-  const updateLine = (id: string, patch: Partial<LineItem>) => {
+  const updateLine = (id: string, patch: Partial<SaleLineItem>) => {
     setForm((f) => ({
       ...f,
       line_items: f.line_items.map((li) => (li.id === id ? { ...li, ...patch } : li)),
@@ -150,15 +139,15 @@ function SalesEntryPage() {
   };
 
   const onLineKindChange = (id: string, kind: LineKind) => {
-    updateLine(id, { kind, carrier: "", product: "" });
+    updateLine(id, { kind, ...clearProductFields() });
   };
 
   const onLineCarrierChange = (id: string, carrierName: string) => {
-    updateLine(id, { carrier: carrierName, product: "" });
+    updateLine(id, { carrier: carrierName, ...clearProductFields() });
   };
 
   const addLine = () =>
-    setForm((f) => ({ ...f, line_items: [...f.line_items, newLineItem()] }));
+    setForm((f) => ({ ...f, line_items: [...f.line_items, newSaleLineItem()] }));
 
   const removeLine = (id: string) =>
     setForm((f) => ({
@@ -180,7 +169,7 @@ function SalesEntryPage() {
       return;
     }
 
-    const normalizedItems: { kind: LineKind; carrier: string; product: string; amount: number }[] = [];
+    const normalizedItems = form.line_items.map(serializeLineItem);
     for (const li of form.line_items) {
       if (!li.kind) {
         toast.error("Select a type for each line item");
@@ -203,7 +192,6 @@ function SalesEntryPage() {
         toast.error(`Invalid amount on line item`);
         return;
       }
-      normalizedItems.push({ kind: li.kind, carrier: li.carrier, product: li.product, amount: n });
     }
 
     const parsed = schema.safeParse({
@@ -280,7 +268,7 @@ function SalesEntryPage() {
                 .map((li) => {
                   const monthly =
                     li.monthly_premium !== "" && isFinite(Number(li.monthly_premium))
-                      ? Number(li.monthly_premium)
+                      ? effectiveMonthlyPremium(li)
                       : li.amount !== "" && isFinite(Number(li.amount))
                         ? +(Number(li.amount) / 12).toFixed(2)
                         : undefined;
@@ -315,7 +303,7 @@ function SalesEntryPage() {
     setForm({
       ...form,
       customer_name: "",
-      line_items: [newLineItem()],
+      line_items: [newSaleLineItem()],
       lead_source: "",
       notes: "",
       sale_date: toDatetimeLocalValue(),
@@ -406,7 +394,7 @@ function SalesEntryPage() {
           </div>
           <div className="space-y-3">
             {form.line_items.map((li, idx) => (
-              <LineItemRow
+              <SaleLineItemRow
                 key={li.id}
                 index={idx}
                 item={li}
@@ -416,13 +404,12 @@ function SalesEntryPage() {
                 canRemove={form.line_items.length > 1}
                 onKindChange={(v) => onLineKindChange(li.id, v)}
                 onCarrierChange={(v) => onLineCarrierChange(li.id, v)}
-                onProductChange={(v) => updateLine(li.id, { product: v })}
-                onMonthlyPremiumChange={(v) => {
-                  const n = Number(v);
-                  const annual = v === "" || !isFinite(n) ? "" : String(+(n * 12).toFixed(2));
-                  updateLine(li.id, { monthly_premium: v, amount: annual });
-                }}
-                onAmountChange={(v) => updateLine(li.id, { amount: v })}
+                onProductChange={(v) =>
+                  updateLine(li.id, lineItemProductPatch(v, li, products, carriers))
+                }
+                onMonthlyPremiumChange={(v) =>
+                  updateLine(li.id, lineItemMonthlyPatch(v, li))
+                }
                 onRemove={() => removeLine(li.id)}
               />
             ))}
@@ -456,141 +443,6 @@ function SalesEntryPage() {
           </Button>
         </div>
       </form>
-    </div>
-  );
-}
-
-export function LineItemRow({
-  index,
-  item,
-  carriers,
-  products,
-  addOns,
-  canRemove,
-  onKindChange,
-  onCarrierChange,
-  onProductChange,
-  onMonthlyPremiumChange,
-  onAmountChange,
-  onRemove,
-}: {
-  index: number;
-  item: LineItem;
-  carriers: CarrierOpt[];
-  products: ProductOpt[];
-  addOns: AddOnOpt[];
-  canRemove: boolean;
-  onKindChange: (v: LineKind) => void;
-  onCarrierChange: (v: string) => void;
-  onProductChange: (v: string) => void;
-  onMonthlyPremiumChange: (v: string) => void;
-  onAmountChange: (v: string) => void;
-  onRemove: () => void;
-}) {
-  const isAddon = item.kind === "addon";
-  const filteredCarriers = item.kind && item.kind !== "addon"
-    ? carriers.filter((c) => c.carrier_type === item.kind)
-    : [];
-  const selectedCarrier = carriers.find((c) => c.name === item.carrier);
-  const filteredProducts = isAddon
-    ? addOns.map((a) => ({ id: a.id, name: a.name }))
-    : selectedCarrier
-      ? products.filter((p) => p.carrier_id === selectedCarrier.id)
-      : [];
-
-  return (
-    <div className="rounded-md border border-border bg-muted/20 p-3">
-      <div className="mb-2 flex items-center justify-between">
-        <span className="text-xs font-medium text-muted-foreground">Item #{index + 1}</span>
-        {canRemove && (
-          <Button type="button" size="sm" variant="ghost" onClick={onRemove} className="h-7 px-2 text-destructive hover:text-destructive">
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
-        )}
-      </div>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <div>
-          <Label className="mb-1 block text-xs">Type</Label>
-          <Select value={item.kind || undefined} onValueChange={(v) => onKindChange(v as LineKind)}>
-            <SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="health">Health Insurance</SelectItem>
-              <SelectItem value="life">Life Insurance</SelectItem>
-              <SelectItem value="addon">Add-on</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        {!isAddon && (
-          <div>
-            <Label className="mb-1 block text-xs">Carrier</Label>
-            <Select value={item.carrier || undefined} onValueChange={onCarrierChange} disabled={!item.kind}>
-              <SelectTrigger>
-                <SelectValue placeholder={item.kind ? "Select carrier" : "Pick a type first"} />
-              </SelectTrigger>
-              <SelectContent>
-                {filteredCarriers.map((c) => <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>)}
-                {item.kind && filteredCarriers.length === 0 && (
-                  <div className="px-2 py-1.5 text-xs text-muted-foreground">No carriers for this type</div>
-                )}
-              </SelectContent>
-            </Select>
-          </div>
-        )}
-      </div>
-      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-[1fr_140px_140px]">
-        <div>
-          <Label className="mb-1 block text-xs">{isAddon ? "Add-on" : "Product"}</Label>
-          <Select
-            value={item.product || undefined}
-            onValueChange={onProductChange}
-            disabled={isAddon ? !item.kind : !item.carrier}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder={
-                isAddon
-                  ? (item.kind ? "Select add-on" : "Pick a type first")
-                  : (item.carrier ? "Select product" : "Pick a carrier first")
-              } />
-            </SelectTrigger>
-            <SelectContent>
-              {filteredProducts.map((p) => <SelectItem key={p.id} value={p.name}>{p.name}</SelectItem>)}
-              {((isAddon && item.kind && filteredProducts.length === 0) ||
-                (!isAddon && item.carrier && filteredProducts.length === 0)) && (
-                <div className="px-2 py-1.5 text-xs text-muted-foreground">
-                  {isAddon ? "No add-ons available" : "No products for this carrier"}
-                </div>
-              )}
-            </SelectContent>
-          </Select>
-        </div>
-        <div>
-          <Label className="mb-1 block text-xs">Monthly Premium ($)</Label>
-          <Input
-            type="number"
-            inputMode="decimal"
-            min="0"
-            step="0.01"
-            placeholder="0.00"
-            value={item.monthly_premium}
-            onChange={(e) => onMonthlyPremiumChange(e.target.value)}
-            disabled={!item.product}
-          />
-        </div>
-        <div>
-          <Label className="mb-1 block text-xs">Annual Premium ($)</Label>
-          <Input
-            type="number"
-            inputMode="decimal"
-            min="0"
-            step="0.01"
-            placeholder="0.00"
-            value={item.amount}
-            onChange={(e) => onAmountChange(e.target.value)}
-            readOnly
-            title="Auto-calculated as Monthly Premium × 12"
-          />
-        </div>
-      </div>
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Pencil, PlusCircle, Search } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
@@ -17,52 +17,89 @@ export const Route = createFileRoute("/_app/sales/")({
   component: SalesListPage,
 });
 
+const PAGE_SIZE = 15;
+const SEARCH_DEBOUNCE_MS = 350;
+
+/** Escape user input for PostgREST ilike patterns (%term%). */
+function escapeIlike(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+}
+
 function SalesListPage() {
   const { user, profile, roles } = useAuth();
   const isAdmin = roles.includes("admin");
   const isManager = roles.includes("manager");
   const [sales, setSales] = useState<SaleRow[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = usePersistentState<string>("sales.search", "");
+  const [searchInput, setSearchInput] = usePersistentState<string>("sales.search", "");
+  const [search, setSearch] = useState(searchInput);
   const [page, setPage] = useState(1);
-  const PAGE_SIZE = 15;
   const refreshTick = useRefreshTick(LIVE_REFRESH_MS);
   const [salesVersion, setSalesVersion] = useState(0);
   useOnSalesChanged(() => setSalesVersion((v) => v + 1));
 
   useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setSearch(searchInput);
+      setPage(1);
+    }, SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [searchInput]);
+
+  useEffect(() => {
     if (!user) return;
     let active = true;
     setLoading(true);
-    let q = supabase.from("sales").select("*").order("sale_date", { ascending: false }).limit(500);
-    if (!isAdmin && !isManager) q = q.eq("agent_id", user.id);
-    else if (isManager && !isAdmin && profile?.team_id) q = q.eq("team_id", profile.team_id);
-    q.then(({ data }) => {
+
+    const offset = (page - 1) * PAGE_SIZE;
+    let q = supabase
+      .from("sales")
+      .select("*")
+      .order("sale_date", { ascending: false })
+      .range(offset, offset + PAGE_SIZE - 1)
+      .count("exact");
+
+    if (!isAdmin && !isManager) {
+      q = q.eq("agent_id", user.id);
+    } else if (isManager && !isAdmin && profile?.team_id) {
+      q = q.eq("team_id", profile.team_id);
+    }
+
+    const term = search.trim();
+    if (term) {
+      const pattern = escapeIlike(term);
+      q = q.or(
+        `sale_id.ilike.%${pattern}%,agent_name.ilike.%${pattern}%,customer_name.ilike.%${pattern}%,carrier.ilike.%${pattern}%`,
+      );
+    }
+
+    q.then(({ data, error, count }) => {
       if (!active) return;
-      setSales((data ?? []) as SaleRow[]);
+      if (error) {
+        console.error("[sales list]", error.message);
+        setSales([]);
+        setTotalCount(0);
+      } else {
+        setSales((data ?? []) as SaleRow[]);
+        setTotalCount(count ?? 0);
+      }
       setLoading(false);
     });
-    return () => { active = false; };
-  }, [user?.id, isAdmin, isManager, profile?.team_id, refreshTick, salesVersion]);
+
+    return () => {
+      active = false;
+    };
+  }, [user?.id, isAdmin, isManager, profile?.team_id, page, search, refreshTick, salesVersion]);
 
   const canEdit = (s: SaleRow) =>
     isAdmin ||
     (isManager && s.team_id && profile?.team_id && s.team_id === profile.team_id) ||
     s.agent_id === user?.id;
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return sales;
-    return sales.filter((s) =>
-      s.sale_id.toLowerCase().includes(q) ||
-      s.agent_name.toLowerCase().includes(q) ||
-      (s.customer_name?.toLowerCase().includes(q) ?? false) ||
-      s.carrier.toLowerCase().includes(q),
-    );
-  }, [sales, search]);
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const rangeStart = totalCount === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
+  const rangeEnd = Math.min(page * PAGE_SIZE, totalCount);
 
   return (
     <div className="space-y-6">
@@ -81,14 +118,24 @@ function SalesListPage() {
       <div className="surface-card p-4">
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input className="pl-9" placeholder="Search by sale ID, agent, customer, carrier…"
-            value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
+          <Input
+            className="pl-9"
+            placeholder="Search by sale ID, agent, customer, carrier…"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+          />
         </div>
       </div>
 
       <div className="surface-card overflow-hidden">
         <div className="flex items-center justify-between border-b border-border p-4">
-          <h2 className="text-base font-semibold">{filtered.length} record{filtered.length === 1 ? "" : "s"}</h2>
+          <h2 className="text-base font-semibold">
+            {loading
+              ? "Loading…"
+              : totalCount === 0
+                ? "0 records"
+                : `Showing ${rangeStart}–${rangeEnd} of ${totalCount.toLocaleString()} record${totalCount === 1 ? "" : "s"}`}
+          </h2>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -104,7 +151,7 @@ function SalesListPage() {
               </tr>
             </thead>
             <tbody>
-              {pageRows.map((s) => {
+              {sales.map((s) => {
                 const editable = canEdit(s);
                 return (
                   <tr key={s.id} className="border-t border-border/50 hover:bg-secondary/30">
@@ -128,20 +175,38 @@ function SalesListPage() {
                   </tr>
                 );
               })}
-              {!loading && pageRows.length === 0 && (
-                <tr><td colSpan={7} className="px-4 py-12 text-center text-sm text-muted-foreground">
-                  No sales records found.
-                </td></tr>
+              {!loading && sales.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="px-4 py-12 text-center text-sm text-muted-foreground">
+                    No sales records found.
+                  </td>
+                </tr>
               )}
             </tbody>
           </table>
         </div>
         {totalPages > 1 && (
           <div className="flex items-center justify-between border-t border-border p-3 text-sm">
-            <div className="text-xs text-muted-foreground">Page {page} of {totalPages}</div>
+            <div className="text-xs text-muted-foreground">
+              Page {page} of {totalPages.toLocaleString()}
+            </div>
             <div className="flex gap-2">
-              <Button variant="secondary" size="sm" disabled={page === 1} onClick={() => setPage((p) => p - 1)}>Prev</Button>
-              <Button variant="secondary" size="sm" disabled={page === totalPages} onClick={() => setPage((p) => p + 1)}>Next</Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={loading || page === 1}
+                onClick={() => setPage((p) => p - 1)}
+              >
+                Prev
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={loading || page >= totalPages}
+                onClick={() => setPage((p) => p + 1)}
+              >
+                Next
+              </Button>
             </div>
           </div>
         )}

@@ -171,6 +171,7 @@ type Order = { column: string; ascending: boolean; nullsFirst?: boolean };
 interface QueryResult<T = any[]> {
   data: T;
   error: PostgrestError | null;
+  count?: number | null;
 }
 
 /** Result type after .maybeSingle()/.single(): data is a row, not an array. */
@@ -191,6 +192,8 @@ class QueryBuilder implements PromiseLike<QueryResult<any[]>> {
   private orFilters: string[] = [];
   private orders: Order[] = [];
   private limitCount: number | undefined;
+  private offsetCount: number | undefined;
+  private countExact = false;
   private wantSingle: "maybe" | "strict" | null = null;
   private returnRows = false;
 
@@ -312,6 +315,18 @@ class QueryBuilder implements PromiseLike<QueryResult<any[]>> {
     return this;
   }
 
+  range(from: number, to: number) {
+    this.offsetCount = from;
+    this.limitCount = to - from + 1;
+    return this;
+  }
+
+  /** Request total row count (before limit/offset) via count=exact. */
+  count(mode: "exact" | "planned" | "estimated") {
+    if (mode === "exact") this.countExact = true;
+    return this;
+  }
+
   maybeSingle(): SingleQuery {
     this.wantSingle = "maybe";
     return this as SingleQuery;
@@ -333,6 +348,8 @@ class QueryBuilder implements PromiseLike<QueryResult<any[]>> {
       params.append("order", v);
     }
     if (this.limitCount !== undefined) params.set("limit", String(this.limitCount));
+    if (this.offsetCount !== undefined) params.set("offset", String(this.offsetCount));
+    if (this.countExact) params.set("count", "exact");
     return params;
   }
 
@@ -364,16 +381,19 @@ class QueryBuilder implements PromiseLike<QueryResult<any[]>> {
 
       const json = (await res.json().catch(() => ({}))) as {
         data?: any[];
+        count?: number;
         error?: PostgrestError;
       };
       if (!res.ok || json.error) {
         return {
           data: null,
           error: json.error ?? { message: `Request failed (${res.status})` },
+          count: null,
         };
       }
 
       let data: any = json.data ?? [];
+      const count = json.count ?? null;
       if (this.wantSingle) {
         if (data.length === 0) {
           if (this.wantSingle === "strict") {
@@ -386,11 +406,12 @@ class QueryBuilder implements PromiseLike<QueryResult<any[]>> {
       } else if (this.action !== "select" && !this.returnRows) {
         data = null;
       }
-      return { data, error: null };
+      return { data, error: null, count };
     } catch (e) {
       return {
         data: null,
         error: { message: e instanceof Error ? e.message : "Network error" },
+        count: null,
       };
     }
   }

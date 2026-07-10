@@ -3,10 +3,14 @@ import { useEffect, useMemo, useState, useCallback } from "react";
 import { Crown, Medal, Trophy } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useCompanySettings } from "@/lib/company-settings";
-import { type SaleRow, formatCurrency } from "@/lib/sales";
+import { formatCurrency } from "@/lib/sales";
 import { rangeFromKey, type DateRangeKey } from "@/lib/metrics";
-import { type ExpenseRow } from "@/lib/expenses";
-import { fetchLeaderboardData } from "@/lib/leaderboard";
+import {
+  fetchLeaderboardData,
+  type AgentStat,
+  type TeamStat,
+} from "@/lib/leaderboard";
+import type { ActivityEvent, AgentProgress } from "@/lib/gamification";
 import { LIVE_REFRESH_MS } from "@/lib/sales-events";
 import { useOnSalesChanged } from "@/hooks/use-on-sales-changed";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -15,6 +19,10 @@ import { DateField } from "@/components/DateField";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { usePersistentState } from "@/hooks/use-persistent-state";
+import { TeamBattleBar, type TeamBattleSide } from "@/components/gamification/TeamBattleBar";
+import { MvpSpotlight } from "@/components/gamification/MvpSpotlight";
+import { LiveActivityFeed } from "@/components/gamification/LiveActivityFeed";
+import { TopAgentsBoard } from "@/components/gamification/TopAgentsBoard";
 
 export const Route = createFileRoute("/_app/leaderboards")({
   component: LeaderboardsPage,
@@ -29,97 +37,112 @@ const TIMEFRAMES: { key: DateRangeKey; label: string }[] = [
 
 const PAGE_SIZES = [10, 20, 30, 50, 100] as const;
 
-interface AgentStat {
-  agent_id: string;
-  agent_name: string;
-  team_id: string | null;
-  team_name: string;
-  revenue: number;
-  count: number;
-  avgDeal: number;
-  lifeCount: number;
-  healthCount: number;
-  addonCount: number;
-  lifeRevenue: number;
-  healthRevenue: number;
-  addonRevenue: number;
-  cpa: number;
-}
-
-interface TeamStat {
-  team_id: string | null;
-  team_name: string;
-  revenue: number;
-  count: number;
-  avgDeal: number;
-  cpa: number;
-}
-
-interface TeamOption {
-  id: string;
-  name: string;
-}
-
-interface AgentOption {
-  id: string;
-  display_name: string;
-  team_id: string | null;
-}
-
-function lineItemsOf(s: SaleRow) {
-  const li = (s as any).line_items;
-  return Array.isArray(li) ? (li as { kind?: string }[]) : [];
-}
-function countByKind(s: SaleRow, kind: "life" | "health" | "addon"): number {
-  return lineItemsOf(s).filter((li) => li.kind === kind).length;
-}
-function revenueByKind(s: SaleRow, kind: "life" | "health" | "addon"): number {
-  return lineItemsOf(s)
-    .filter((li) => li.kind === kind)
-    .reduce((sum, li: any) => sum + Number(li.amount ?? 0), 0);
-}
-function saleHasAddon(s: SaleRow, addonName?: string): boolean {
-  const fromLineItems = lineItemsOf(s).some(
-    (li) => li.kind === "addon" && (!addonName || (li as { product?: string }).product === addonName),
-  );
-  if (fromLineItems) return true;
-  if (!addonName) return (s.add_ons?.length ?? 0) > 0;
-  return s.add_ons?.includes(addonName) ?? false;
-}
-
 function LeaderboardsPage() {
   const { user, session } = useAuth();
   const { reportingTimezone } = useCompanySettings();
   const [timeframe, setTimeframe] = usePersistentState<DateRangeKey>("lb.timeframe", "week");
   const [customFrom, setCustomFrom] = useState<Date | undefined>(undefined);
   const [customTo, setCustomTo] = useState<Date | undefined>(undefined);
-  const [sales, setSales] = useState<SaleRow[]>([]);
-  const [expenses, setExpenses] = useState<ExpenseRow[]>([]);
-  const [allTeams, setAllTeams] = useState<TeamOption[]>([]);
-  const [allAgents, setAllAgents] = useState<AgentOption[]>([]);
+  const [agentStats, setAgentStats] = useState<AgentStat[]>([]);
+  const [teamStats, setTeamStats] = useState<TeamStat[]>([]);
+  const [filterOptions, setFilterOptions] = useState({
+    carriers: [] as string[],
+    products: [] as string[],
+    lead_sources: [] as string[],
+    addons: [] as string[],
+  });
+  const [progressByAgent, setProgressByAgent] = useState<Record<string, AgentProgress>>({});
+  const [activity, setActivity] = useState<ActivityEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshedAt, setRefreshedAt] = useState<Date>(new Date());
+
+  const [agentSearch, setAgentSearch] = usePersistentState<string>("lb.agentSearch", "");
+  const [teamFilter, setTeamFilter] = usePersistentState<string>("lb.team", "all");
+  const [carrierFilter, setCarrierFilter] = usePersistentState<string>("lb.v2.carrier", "all");
+  const [productFilter, setProductFilter] = usePersistentState<string>("lb.v2.product", "all");
+  const [leadSourceFilter, setLeadSourceFilter] = usePersistentState<string>("lb.v2.leadSource", "all");
+  const [addonFilter, setAddonFilter] = usePersistentState<string>("lb.v2.addon", "all");
+  const [agentPage, setAgentPage] = useState(1);
+  const [agentPageSize, setAgentPageSize] = usePersistentState<number>("lb.agentPageSize", 10);
+  const [teamPage, setTeamPage] = useState(1);
+  const [teamPageSize, setTeamPageSize] = usePersistentState<number>("lb.teamPageSize", 10);
+  const [leaderboardMeta, setLeaderboardMeta] = useState({ sale_count: 0, filtered_sale_count: 0 });
 
   const range = useMemo(
     () => rangeFromKey(timeframe, { from: customFrom, to: customTo }),
     [timeframe, customFrom, customTo, reportingTimezone],
   );
 
+  const apiFilters = useMemo(() => {
+    const carrier =
+      carrierFilter !== "all" && !filterOptions.carriers.includes(carrierFilter) ? "all" : carrierFilter;
+    const product =
+      productFilter !== "all" && !filterOptions.products.includes(productFilter) ? "all" : productFilter;
+    const leadSource =
+      leadSourceFilter !== "all" && !filterOptions.lead_sources.includes(leadSourceFilter)
+        ? "all"
+        : leadSourceFilter;
+    const addon =
+      addonFilter !== "all" &&
+      addonFilter !== "__none" &&
+      !filterOptions.addons.includes(addonFilter)
+        ? "all"
+        : addonFilter;
+    return { carrier, product, leadSource, addon };
+  }, [carrierFilter, productFilter, leadSourceFilter, addonFilter, filterOptions]);
+
+  // Drop stale localStorage filter values that no longer exist in the current period.
+  useEffect(() => {
+    if (carrierFilter !== "all" && filterOptions.carriers.length > 0 && !filterOptions.carriers.includes(carrierFilter)) {
+      setCarrierFilter("all");
+    }
+    if (productFilter !== "all" && filterOptions.products.length > 0 && !filterOptions.products.includes(productFilter)) {
+      setProductFilter("all");
+    }
+    if (
+      leadSourceFilter !== "all" &&
+      filterOptions.lead_sources.length > 0 &&
+      !filterOptions.lead_sources.includes(leadSourceFilter)
+    ) {
+      setLeadSourceFilter("all");
+    }
+    if (
+      addonFilter !== "all" &&
+      addonFilter !== "__none" &&
+      filterOptions.addons.length > 0 &&
+      !filterOptions.addons.includes(addonFilter)
+    ) {
+      setAddonFilter("all");
+    }
+  }, [
+    carrierFilter,
+    productFilter,
+    leadSourceFilter,
+    addonFilter,
+    filterOptions,
+    setCarrierFilter,
+    setProductFilter,
+    setLeadSourceFilter,
+    setAddonFilter,
+  ]);
+
   const load = useCallback(() => {
     setLoading(true);
-    fetchLeaderboardData(range.from, range.to, session?.access_token)
+    fetchLeaderboardData(range.from, range.to, session?.access_token, apiFilters)
       .then((data) => {
-        setSales(data.sales);
-        setExpenses(data.expenses);
-        setAllTeams(data.teams as TeamOption[]);
-        setAllAgents(data.profiles as AgentOption[]);
+        setAgentStats(data.agent_stats);
+        setTeamStats(data.team_stats);
+        setFilterOptions(data.filter_options);
+        setProgressByAgent(data.progress);
+        setActivity(data.activity);
+        setLeaderboardMeta(data.meta);
         setRefreshedAt(new Date());
       })
       .catch((err) => {
         console.error("[Leaderboards]", err);
       })
       .finally(() => setLoading(false));
-  }, [range.from, range.to, session?.access_token]);
+  }, [range.from, range.to, session?.access_token, apiFilters]);
 
   useEffect(() => {
     load();
@@ -129,115 +152,14 @@ function LeaderboardsPage() {
 
   useOnSalesChanged(load);
 
-  const [agentSearch, setAgentSearch] = usePersistentState<string>("lb.agentSearch", "");
-  const [teamFilter, setTeamFilter] = usePersistentState<string>("lb.team", "all");
-  const [carrierFilter, setCarrierFilter] = usePersistentState<string>("lb.carrier", "all");
-  const [productFilter, setProductFilter] = usePersistentState<string>("lb.product", "all");
-  const [leadSourceFilter, setLeadSourceFilter] = usePersistentState<string>("lb.leadSource", "all");
-  const [addonFilter, setAddonFilter] = usePersistentState<string>("lb.addon", "all");
-  const [agentPage, setAgentPage] = useState(1);
-  const [agentPageSize, setAgentPageSize] = usePersistentState<number>("lb.agentPageSize", 10);
-  const [teamPage, setTeamPage] = useState(1);
-  const [teamPageSize, setTeamPageSize] = usePersistentState<number>("lb.teamPageSize", 10);
-
-  const filteredSales = useMemo(() => {
-    return sales.filter((s) => {
-      if (carrierFilter !== "all" && s.carrier !== carrierFilter) return false;
-      if (productFilter !== "all" && s.product !== productFilter) return false;
-      if (leadSourceFilter !== "all" && (s.lead_source ?? "") !== leadSourceFilter) return false;
-      if (addonFilter !== "all") {
-        if (addonFilter === "__none") {
-          if (saleHasAddon(s)) return false;
-        } else if (!saleHasAddon(s, addonFilter)) return false;
-      }
-      return true;
-    });
-  }, [sales, carrierFilter, productFilter, leadSourceFilter, addonFilter]);
-
-  const expenseByAgent = useMemo(() => {
-    const m = new Map<string, number>();
-    expenses.forEach((e) => m.set(e.agent_id, (m.get(e.agent_id) ?? 0) + Number(e.amount)));
-    return m;
-  }, [expenses]);
-
-  const agents = useMemo<AgentStat[]>(() => {
-    const teamNameById = new Map(allTeams.map((team) => [team.id, team.name]));
-    const map = new Map<string, AgentStat>(
-      allAgents.map((agent) => [agent.id, {
-        agent_id: agent.id,
-        agent_name: agent.display_name,
-        team_id: agent.team_id,
-        team_name: agent.team_id ? (teamNameById.get(agent.team_id) ?? "Unassigned") : "Unassigned",
-        revenue: 0,
-        count: 0,
-        avgDeal: 0,
-        lifeCount: 0,
-        healthCount: 0,
-        addonCount: 0,
-        lifeRevenue: 0,
-        healthRevenue: 0,
-        addonRevenue: 0,
-        cpa: 0,
-      }]),
-    );
-    filteredSales.forEach((s) => {
-      const cur = map.get(s.agent_id) ?? {
-        agent_id: s.agent_id, agent_name: s.agent_name,
-        team_id: s.team_id, team_name: s.team_name ?? "Unassigned",
-        revenue: 0, count: 0, avgDeal: 0,
-        lifeCount: 0, healthCount: 0, addonCount: 0,
-        lifeRevenue: 0, healthRevenue: 0, addonRevenue: 0, cpa: 0,
-      };
-      cur.revenue += Number(s.deal_size);
-      cur.count += 1;
-      cur.lifeCount += countByKind(s, "life");
-      cur.healthCount += countByKind(s, "health");
-      cur.addonCount += countByKind(s, "addon");
-      cur.lifeRevenue += revenueByKind(s, "life");
-      cur.healthRevenue += revenueByKind(s, "health");
-      cur.addonRevenue += revenueByKind(s, "addon");
-      map.set(s.agent_id, cur);
-    });
-    return [...map.values()].map((a) => {
-      const totalExpense = expenseByAgent.get(a.agent_id) ?? 0;
-      return {
-        ...a,
-        avgDeal: a.count ? a.revenue / a.count : 0,
-        cpa: a.count ? totalExpense / a.count : 0,
-      };
-    }).sort((a, b) => b.revenue - a.revenue || b.count - a.count || a.agent_name.localeCompare(b.agent_name));
-  }, [allAgents, allTeams, filteredSales, expenseByAgent]);
-
-  const teamOptions = useMemo(() => {
-    const m = new Map<string, string>(allTeams.map((team) => [team.id, team.name]));
-    sales.forEach((s) => {
-      const id = s.team_id ?? "none";
-      m.set(id, s.team_name ?? "Unassigned");
-    });
-    return [...m.entries()].map(([id, name]) => ({ id, name }));
-  }, [allTeams, sales]);
-
-  const carrierOptions = useMemo(
-    () => Array.from(new Set(sales.map((s) => s.carrier))).sort(),
-    [sales],
+  const teamOptions = useMemo(
+    () => teamStats.map((t) => ({ id: t.team_id ?? "none", name: t.team_name })),
+    [teamStats],
   );
-  const productOptions = useMemo(
-    () => Array.from(new Set(sales.map((s) => s.product))).sort(),
-    [sales],
-  );
-  const leadSourceOptions = useMemo(
-    () => Array.from(new Set(sales.map((s) => s.lead_source).filter((x): x is string => !!x))).sort(),
-    [sales],
-  );
-  const addonOptions = useMemo(() => {
-    const set = new Set<string>();
-    sales.forEach((s) => s.add_ons?.forEach((a) => set.add(a)));
-    return [...set].sort();
-  }, [sales]);
 
   const filteredAgents = useMemo(() => {
     const q = agentSearch.trim().toLowerCase();
-    return agents.filter((a) => {
+    return agentStats.filter((a) => {
       if (q && !a.agent_name.toLowerCase().includes(q)) return false;
       if (teamFilter !== "all") {
         const id = a.team_id ?? "none";
@@ -245,38 +167,16 @@ function LeaderboardsPage() {
       }
       return true;
     });
-  }, [agents, agentSearch, teamFilter]);
+  }, [agentStats, agentSearch, teamFilter]);
 
-  const hasExtraFilters = carrierFilter !== "all" || productFilter !== "all" || leadSourceFilter !== "all" || addonFilter !== "all";
+  const hasExtraFilters =
+    apiFilters.carrier !== "all" ||
+    apiFilters.product !== "all" ||
+    apiFilters.leadSource !== "all" ||
+    apiFilters.addon !== "all";
 
-  const teams = useMemo<TeamStat[]>(() => {
-    const map = new Map<string, TeamStat>(
-      allTeams.map((team) => [team.id, {
-        team_id: team.id,
-        team_name: team.name,
-        revenue: 0,
-        count: 0,
-        avgDeal: 0,
-        cpa: 0,
-      }]),
-    );
-    filteredSales.forEach((s) => {
-      const key = s.team_id ?? "none";
-      const cur = map.get(key) ?? {
-        team_id: s.team_id, team_name: s.team_name ?? "Unassigned",
-        revenue: 0, count: 0, avgDeal: 0, cpa: 0,
-      };
-      cur.revenue += Number(s.deal_size);
-      cur.count += 1;
-      cur.cpa += Number(s.cost_per_lead ?? 0);
-      map.set(key, cur);
-    });
-    return [...map.values()].map((t) => ({
-      ...t,
-      avgDeal: t.count ? t.revenue / t.count : 0,
-      cpa: t.count ? t.cpa / t.count : 0,
-    })).sort((a, b) => b.revenue - a.revenue || b.count - a.count);
-  }, [allTeams, filteredSales]);
+  const filtersHidingResults =
+    leaderboardMeta.sale_count > 0 && leaderboardMeta.filtered_sale_count === 0 && hasExtraFilters;
 
   const agentPageCount = Math.max(1, Math.ceil(filteredAgents.length / agentPageSize));
   const currentAgentPage = Math.min(agentPage, agentPageCount);
@@ -284,25 +184,78 @@ function LeaderboardsPage() {
     (currentAgentPage - 1) * agentPageSize,
     currentAgentPage * agentPageSize,
   );
-  const teamPageCount = Math.max(1, Math.ceil(teams.length / teamPageSize));
+  const teamPageCount = Math.max(1, Math.ceil(teamStats.length / teamPageSize));
   const currentTeamPage = Math.min(teamPage, teamPageCount);
-  const paginatedTeams = teams.slice(
+  const paginatedTeams = teamStats.slice(
     (currentTeamPage - 1) * teamPageSize,
     currentTeamPage * teamPageSize,
   );
+
+  const agentsPerTeam = useMemo(() => {
+    const counts = new Map<string, Set<string>>();
+    agentStats.forEach((a) => {
+      if (a.count === 0) return;
+      const key = a.team_id ?? "none";
+      if (!counts.has(key)) counts.set(key, new Set());
+      counts.get(key)!.add(a.agent_id);
+    });
+    const out = new Map<string, number>();
+    counts.forEach((set, key) => out.set(key, set.size));
+    return out;
+  }, [agentStats]);
+
+  const teamBattle = useMemo((): { left: TeamBattleSide; right: TeamBattleSide } | null => {
+    if (teamStats.length < 2) return null;
+    const [a, b] = teamStats;
+    return {
+      left: {
+        team_id: a.team_id ?? "none",
+        team_name: a.team_name,
+        revenue: a.revenue,
+        agent_count: agentsPerTeam.get(a.team_id ?? "none") ?? 0,
+      },
+      right: {
+        team_id: b.team_id ?? "none",
+        team_name: b.team_name,
+        revenue: b.revenue,
+        agent_count: agentsPerTeam.get(b.team_id ?? "none") ?? 0,
+      },
+    };
+  }, [teamStats, agentsPerTeam]);
+
+  const mvp = filteredAgents.find((a) => a.count > 0) ?? filteredAgents[0] ?? null;
+  const rankedForBoard = useMemo(
+    () =>
+      filteredAgents
+        .filter((a) => a.count > 0)
+        .map((a) => ({
+          agent_id: a.agent_id,
+          agent_name: a.agent_name,
+          revenue: a.revenue,
+          count: a.count,
+          progress: progressByAgent[a.agent_id] ?? null,
+        })),
+    [filteredAgents, progressByAgent],
+  );
+
+  const weeklyGoal = teamBattle ? (teamBattle.left.revenue + teamBattle.right.revenue) * 1.5 : undefined;
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-end">
         <div>
           <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Leaderboards</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Top performers, ranked by revenue. Auto-refreshes every minute.</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Compete live — team battles, streaks, and levels. Auto-refreshes every minute.
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <div className="hidden text-xs text-muted-foreground sm:block">
             Updated {refreshedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
           </div>
-          <Button variant="secondary" size="sm" onClick={load} disabled={loading}>Refresh</Button>
+          <Button variant="secondary" size="sm" onClick={load} disabled={loading}>
+            Refresh
+          </Button>
         </div>
       </div>
 
@@ -323,6 +276,26 @@ function LeaderboardsPage() {
         ))}
       </div>
 
+      {filtersHidingResults && (
+        <div className="surface-card flex flex-wrap items-center justify-between gap-3 border border-[var(--warning)]/40 bg-[var(--warning)]/10 p-4 text-sm">
+          <p>
+            Filters are hiding all <strong>{leaderboardMeta.sale_count}</strong> sales in this period.
+            Clear filters to see leaderboard data.
+          </p>
+          <Button
+            size="sm"
+            onClick={() => {
+              setCarrierFilter("all");
+              setProductFilter("all");
+              setLeadSourceFilter("all");
+              setAddonFilter("all");
+            }}
+          >
+            Clear filters
+          </Button>
+        </div>
+      )}
+
       {timeframe === "custom" && (
         <div className="surface-card flex flex-col gap-3 p-4 sm:flex-row sm:items-end">
           <DateField label="From" value={customFrom} onChange={setCustomFrom} max={customTo} />
@@ -337,7 +310,7 @@ function LeaderboardsPage() {
             <SelectTrigger><SelectValue placeholder="All carriers" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All carriers</SelectItem>
-              {carrierOptions.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+              {filterOptions.carriers.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
             </SelectContent>
           </Select>
         </div>
@@ -347,7 +320,7 @@ function LeaderboardsPage() {
             <SelectTrigger><SelectValue placeholder="All products" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All products</SelectItem>
-              {productOptions.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+              {filterOptions.products.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
             </SelectContent>
           </Select>
         </div>
@@ -358,7 +331,7 @@ function LeaderboardsPage() {
             <SelectContent>
               <SelectItem value="all">Any add-on</SelectItem>
               <SelectItem value="__none">No add-ons</SelectItem>
-              {addonOptions.map((a) => <SelectItem key={a} value={a}>{a}</SelectItem>)}
+              {filterOptions.addons.map((a) => <SelectItem key={a} value={a}>{a}</SelectItem>)}
             </SelectContent>
           </Select>
         </div>
@@ -368,7 +341,7 @@ function LeaderboardsPage() {
             <SelectTrigger><SelectValue placeholder="All sources" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All sources</SelectItem>
-              {leadSourceOptions.map((l) => <SelectItem key={l} value={l}>{l}</SelectItem>)}
+              {filterOptions.lead_sources.map((l) => <SelectItem key={l} value={l}>{l}</SelectItem>)}
             </SelectContent>
           </Select>
         </div>
@@ -390,10 +363,37 @@ function LeaderboardsPage() {
         )}
       </div>
 
+      {loading && agentStats.length === 0 ? (
+        <div className="game-panel p-8 text-center text-sm text-muted-foreground">Loading leaderboard…</div>
+      ) : (
+        <>
+          {teamBattle && (
+            <TeamBattleBar left={teamBattle.left} right={teamBattle.right} weeklyGoal={weeklyGoal} />
+          )}
+
+          <div className="grid gap-4 lg:grid-cols-2 lg:items-start">
+            {mvp && (
+              <MvpSpotlight
+                name={mvp.agent_name}
+                revenue={mvp.revenue}
+                salesCount={mvp.count}
+                progress={progressByAgent[mvp.agent_id]}
+                tags={["Rank #1 this week", mvp.lifeCount > 0 ? "Life policies" : null, "Top performer"].filter(
+                  (x): x is string => !!x,
+                )}
+              />
+            )}
+            <LiveActivityFeed events={activity} loading={loading} />
+          </div>
+
+          <TopAgentsBoard agents={rankedForBoard} highlightId={user?.id} />
+        </>
+      )}
+
       <Tabs defaultValue="agents">
         <TabsList>
-          <TabsTrigger value="agents">Top Agents</TabsTrigger>
-          <TabsTrigger value="teams">Top Teams</TabsTrigger>
+          <TabsTrigger value="agents">Full Stats — Agents</TabsTrigger>
+          <TabsTrigger value="teams">Full Stats — Teams</TabsTrigger>
         </TabsList>
 
         <TabsContent value="agents" className="mt-4 space-y-3">
@@ -499,7 +499,7 @@ function LeaderboardsPage() {
                       <td className="num px-4 py-3 text-right">{formatCurrency(t.cpa)}</td>
                     </Row>
                   ))}
-                  {!loading && teams.length === 0 && (
+                  {!loading && teamStats.length === 0 && (
                     <tr><td colSpan={6} className="px-4 py-12 text-center text-sm text-muted-foreground">No team sales yet.</td></tr>
                   )}
                 </tbody>
@@ -509,7 +509,7 @@ function LeaderboardsPage() {
               page={currentTeamPage}
               pageCount={teamPageCount}
               pageSize={teamPageSize}
-              total={teams.length}
+              total={teamStats.length}
               onPageChange={setTeamPage}
               onPageSizeChange={(size) => { setTeamPageSize(size); setTeamPage(1); }}
             />

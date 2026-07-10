@@ -16,6 +16,7 @@ import { Route as AppRouteImport } from './routes/_app'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppSettingsRouteImport } from './routes/_app.settings'
 import { Route as AppLeaderboardsRouteImport } from './routes/_app.leaderboards'
+import { Route as AppIncentivesRouteImport } from './routes/_app.incentives'
 import { Route as AppDashboardRouteImport } from './routes/_app.dashboard'
 import { Route as AppConnectRouteImport } from './routes/_app.connect'
 import { Route as AppSalesIndexRouteImport } from './routes/_app.sales.index'
@@ -61,6 +62,11 @@ const AppSettingsRoute = AppSettingsRouteImport.update({
 const AppLeaderboardsRoute = AppLeaderboardsRouteImport.update({
   id: '/leaderboards',
   path: '/leaderboards',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppIncentivesRoute = AppIncentivesRouteImport.update({
+  id: '/incentives',
+  path: '/incentives',
   getParentRoute: () => AppRoute,
 } as any)
 const AppDashboardRoute = AppDashboardRouteImport.update({
@@ -132,6 +138,7 @@ export interface FileRoutesByFullPath {
   '/signup': typeof SignupRoute
   '/connect': typeof AppConnectRouteWithChildren
   '/dashboard': typeof AppDashboardRoute
+  '/incentives': typeof AppIncentivesRoute
   '/leaderboards': typeof AppLeaderboardsRoute
   '/settings': typeof AppSettingsRoute
   '/agents/$agentId': typeof AppAgentsAgentIdRoute
@@ -151,6 +158,7 @@ export interface FileRoutesByTo {
   '/reset-password': typeof ResetPasswordRoute
   '/signup': typeof SignupRoute
   '/dashboard': typeof AppDashboardRoute
+  '/incentives': typeof AppIncentivesRoute
   '/leaderboards': typeof AppLeaderboardsRoute
   '/settings': typeof AppSettingsRoute
   '/agents/$agentId': typeof AppAgentsAgentIdRoute
@@ -173,6 +181,7 @@ export interface FileRoutesById {
   '/signup': typeof SignupRoute
   '/_app/connect': typeof AppConnectRouteWithChildren
   '/_app/dashboard': typeof AppDashboardRoute
+  '/_app/incentives': typeof AppIncentivesRoute
   '/_app/leaderboards': typeof AppLeaderboardsRoute
   '/_app/settings': typeof AppSettingsRoute
   '/_app/agents/$agentId': typeof AppAgentsAgentIdRoute
@@ -195,6 +204,7 @@ export interface FileRouteTypes {
     | '/signup'
     | '/connect'
     | '/dashboard'
+    | '/incentives'
     | '/leaderboards'
     | '/settings'
     | '/agents/$agentId'
@@ -214,6 +224,7 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/signup'
     | '/dashboard'
+    | '/incentives'
     | '/leaderboards'
     | '/settings'
     | '/agents/$agentId'
@@ -235,6 +246,7 @@ export interface FileRouteTypes {
     | '/signup'
     | '/_app/connect'
     | '/_app/dashboard'
+    | '/_app/incentives'
     | '/_app/leaderboards'
     | '/_app/settings'
     | '/_app/agents/$agentId'
@@ -306,6 +318,13 @@ declare module '@tanstack/react-router' {
       path: '/leaderboards'
       fullPath: '/leaderboards'
       preLoaderRoute: typeof AppLeaderboardsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/incentives': {
+      id: '/_app/incentives'
+      path: '/incentives'
+      fullPath: '/incentives'
+      preLoaderRoute: typeof AppIncentivesRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/dashboard': {
@@ -412,6 +431,7 @@ const AppConnectRouteWithChildren = AppConnectRoute._addFileChildren(
 interface AppRouteChildren {
   AppConnectRoute: typeof AppConnectRouteWithChildren
   AppDashboardRoute: typeof AppDashboardRoute
+  AppIncentivesRoute: typeof AppIncentivesRoute
   AppLeaderboardsRoute: typeof AppLeaderboardsRoute
   AppSettingsRoute: typeof AppSettingsRoute
   AppAgentsAgentIdRoute: typeof AppAgentsAgentIdRoute
@@ -427,6 +447,7 @@ interface AppRouteChildren {
 const AppRouteChildren: AppRouteChildren = {
   AppConnectRoute: AppConnectRouteWithChildren,
   AppDashboardRoute: AppDashboardRoute,
+  AppIncentivesRoute: AppIncentivesRoute,
   AppLeaderboardsRoute: AppLeaderboardsRoute,
   AppSettingsRoute: AppSettingsRoute,
   AppAgentsAgentIdRoute: AppAgentsAgentIdRoute,

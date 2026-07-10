@@ -1,34 +1,36 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Users, Search, ArrowRight } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
+import { fetchAgentsList, type AgentListRow } from "@/lib/agents";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { formatCurrency } from "@/lib/sales";
+import { useOnSalesChanged } from "@/hooks/use-on-sales-changed";
 
 export const Route = createFileRoute("/_app/agents/")({
   component: AgentsIndexPage,
 });
 
-interface AgentRow {
-  agent_id: string;
-  agent_name: string;
-  team_id: string | null;
-  team_name: string | null;
-  sales_count: number;
-  revenue: number;
-}
+const PAGE_SIZE = 15;
+const SEARCH_DEBOUNCE_MS = 350;
 
 function AgentsIndexPage() {
-  const { roles, loading: authLoading } = useAuth();
+  const { roles, loading: authLoading, session } = useAuth();
   const navigate = useNavigate();
   const canManage = roles.includes("admin") || roles.includes("manager");
-  const [rows, setRows] = useState<AgentRow[]>([]);
+  const [rows, setRows] = useState<AgentListRow[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [team, setTeam] = useState("all");
+  const [page, setPage] = useState(1);
+  const [teamOptions, setTeamOptions] = useState<{ id: string; name: string }[]>([]);
+  const [agentsVersion, setAgentsVersion] = useState(0);
+  useOnSalesChanged(() => setAgentsVersion((v) => v + 1));
 
   useEffect(() => {
     if (!authLoading && !canManage) navigate({ to: "/dashboard" });
@@ -36,48 +38,62 @@ function AgentsIndexPage() {
 
   useEffect(() => {
     if (!canManage) return;
-    let active = true;
-    setLoading(true);
-    Promise.all([
-      supabase.from("profiles").select("id, display_name, team_id, teams:team_id(name)"),
-      supabase.from("sales").select("agent_id, deal_size"),
-    ]).then(([profilesRes, salesRes]) => {
-      if (!active) return;
-      const totals = new Map<string, { count: number; revenue: number }>();
-      (salesRes.data ?? []).forEach((s: any) => {
-        const cur = totals.get(s.agent_id) ?? { count: 0, revenue: 0 };
-        cur.count += 1;
-        cur.revenue += Number(s.deal_size) || 0;
-        totals.set(s.agent_id, cur);
+    supabase
+      .from("teams")
+      .select("id, name")
+      .order("name")
+      .then(({ data }) => {
+        setTeamOptions((data ?? []) as { id: string; name: string }[]);
       });
-      const list: AgentRow[] = (profilesRes.data ?? []).map((p: any) => ({
-        agent_id: p.id,
-        agent_name: p.display_name,
-        team_id: p.team_id ?? null,
-        team_name: p.teams?.name ?? "Unassigned",
-        sales_count: (totals.get(p.id)?.count) ?? 0,
-        revenue: (totals.get(p.id)?.revenue) ?? 0,
-      }));
-      list.sort((a, b) => b.revenue - a.revenue || a.agent_name.localeCompare(b.agent_name));
-      setRows(list);
-      setLoading(false);
-    });
-    return () => { active = false; };
   }, [canManage]);
 
-  const teamOptions = useMemo(() => {
-    const m = new Map<string, string>();
-    rows.forEach((r) => m.set(r.team_id ?? "none", r.team_name ?? "Unassigned"));
-    return [...m.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
-  }, [rows]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setSearch(searchInput);
+      setPage(1);
+    }, SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [searchInput]);
 
-  const filtered = useMemo(() => {
-    return rows.filter((r) => {
-      if (team !== "all" && (r.team_id ?? "none") !== team) return false;
-      if (search && !r.agent_name.toLowerCase().includes(search.toLowerCase())) return false;
-      return true;
-    });
-  }, [rows, search, team]);
+  useEffect(() => {
+    setPage(1);
+  }, [team]);
+
+  useEffect(() => {
+    if (!canManage || !session?.access_token) return;
+    let active = true;
+    setLoading(true);
+
+    fetchAgentsList({
+      search,
+      team,
+      page,
+      pageSize: PAGE_SIZE,
+      accessToken: session.access_token,
+    })
+      .then((result) => {
+        if (!active) return;
+        setRows(result.data);
+        setTotalCount(result.count);
+      })
+      .catch((err) => {
+        if (!active) return;
+        console.error("[agents list]", err);
+        setRows([]);
+        setTotalCount(0);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [canManage, session?.access_token, search, team, page, agentsVersion]);
+
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const rangeStart = totalCount === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
+  const rangeEnd = Math.min(page * PAGE_SIZE, totalCount);
 
   return (
     <div className="space-y-6">
@@ -91,7 +107,12 @@ function AgentsIndexPage() {
           <label className="mb-1.5 block text-xs uppercase tracking-wider text-muted-foreground">Search agent</label>
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input className="pl-9" placeholder="Type a name…" value={search} onChange={(e) => setSearch(e.target.value)} />
+            <Input
+              className="pl-9"
+              placeholder="Type a name…"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+            />
           </div>
         </div>
         <div>
@@ -100,20 +121,31 @@ function AgentsIndexPage() {
             <SelectTrigger><SelectValue placeholder="All teams" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All teams</SelectItem>
-              {teamOptions.map((t) => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}
+              <SelectItem value="none">Unassigned</SelectItem>
+              {teamOptions.map((t) => (
+                <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>
-        {(search || team !== "all") && (
+        {(searchInput || team !== "all") && (
           <div className="sm:col-span-3">
-            <Button variant="ghost" size="sm" onClick={() => { setSearch(""); setTeam("all"); }}>Clear filters</Button>
+            <Button variant="ghost" size="sm" onClick={() => { setSearchInput(""); setTeam("all"); }}>
+              Clear filters
+            </Button>
           </div>
         )}
       </div>
 
       <div className="surface-card overflow-hidden">
         <div className="flex items-center justify-between border-b border-border p-4">
-          <h2 className="text-base font-semibold">{filtered.length} agent{filtered.length === 1 ? "" : "s"}</h2>
+          <h2 className="text-base font-semibold">
+            {loading
+              ? "Loading…"
+              : totalCount === 0
+                ? "0 agents"
+                : `Showing ${rangeStart}–${rangeEnd} of ${totalCount.toLocaleString()} agent${totalCount === 1 ? "" : "s"}`}
+          </h2>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -127,7 +159,7 @@ function AgentsIndexPage() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((a) => (
+              {rows.map((a) => (
                 <tr key={a.agent_id} className="border-t border-border/50 hover:bg-secondary/30">
                   <td className="px-4 py-3 font-medium">
                     <div className="flex items-center gap-2">
@@ -138,7 +170,7 @@ function AgentsIndexPage() {
                     </div>
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">{a.team_name ?? "Unassigned"}</td>
-                  <td className="num px-4 py-3 text-right">{a.sales_count}</td>
+                  <td className="num px-4 py-3 text-right">{a.sales_count.toLocaleString()}</td>
                   <td className="num px-4 py-3 text-right font-medium">{formatCurrency(a.revenue)}</td>
                   <td className="px-4 py-3 text-right">
                     <Button asChild size="sm" variant="secondary">
@@ -149,14 +181,41 @@ function AgentsIndexPage() {
                   </td>
                 </tr>
               ))}
-              {!loading && filtered.length === 0 && (
-                <tr><td colSpan={5} className="px-4 py-12 text-center text-sm text-muted-foreground">
-                  No agents match your filters.
-                </td></tr>
+              {!loading && rows.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-4 py-12 text-center text-sm text-muted-foreground">
+                    No agents match your filters.
+                  </td>
+                </tr>
               )}
             </tbody>
           </table>
         </div>
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between border-t border-border p-3 text-sm">
+            <div className="text-xs text-muted-foreground">
+              Page {page} of {totalPages.toLocaleString()}
+            </div>
+            <div className="flex gap-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={loading || page === 1}
+                onClick={() => setPage((p) => p - 1)}
+              >
+                Prev
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={loading || page >= totalPages}
+                onClick={() => setPage((p) => p + 1)}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
