@@ -17,6 +17,7 @@ import { DateField } from "@/components/DateField";
 import { useRefreshTick } from "@/hooks/use-auto-refresh";
 import { LIVE_REFRESH_MS } from "@/lib/sales-events";
 import { useOnSalesChanged } from "@/hooks/use-on-sales-changed";
+import { OnboardingProgressPanel } from "@/components/OnboardingProgressPanel";
 import { usePersistentState } from "@/hooks/use-persistent-state";
 
 export const Route = createFileRoute("/_app/dashboard")({
@@ -222,15 +223,18 @@ function DashboardPage() {
     <div className="space-y-6">
       <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Dashboard</h1>
+          <p className="text-xs font-semibold uppercase tracking-widest text-[var(--game-orange)]">
+            Performance HQ
+          </p>
+          <h1 className="mt-1 text-2xl font-bold tracking-tight sm:text-3xl">Dashboard</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Welcome back{profile ? `, ${profile.display_name}` : ""}. Here&apos;s how sales are performing.
+            Welcome back{profile ? `, ${profile.display_name}` : ""}. Track deals, attach rates, and your season path.
           </p>
         </div>
       </div>
 
       {/* Filters */}
-      <div className="surface-card grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+      <div className="game-panel grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         <div>
           <label className="mb-1.5 block text-xs uppercase tracking-wider text-muted-foreground">Date range</label>
           <Select value={rangeKey} onValueChange={(v) => setRangeKey(v as DateRangeKey)}>
@@ -347,11 +351,17 @@ function DashboardPage() {
           corner={<span>{cpa.numSales.toLocaleString()} sale{cpa.numSales === 1 ? "" : "s"}</span>} />
       </div>
 
+      {/* 13-week tracker / milestones / income goal — under Total Revenue area */}
+      {(isAgentOnly || !!user) && (
+        <OnboardingProgressPanel agentId={isAgentOnly ? user?.id : undefined} />
+      )}
+
       {/* Trend chart */}
-      <div className="surface-card p-4 sm:p-6">
+      <div className="game-panel p-4 sm:p-6">
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h2 className="text-base font-semibold">
+            <p className="text-xs font-semibold uppercase tracking-widest text-[var(--game-teal)]">Live pulse</p>
+            <h2 className="text-base font-bold">
               {trendMetric === "revenue" && "Total revenue trend"}
               {trendMetric === "avgDeal" && "Average deal size trend"}
               {trendMetric === "life" && "Life insurance revenue trend"}
@@ -392,10 +402,10 @@ function DashboardPage() {
                   formatter={(v: any, name: any) => [formatCurrency(Number(v)), String(name)]}
                 />
                 {(trendMetric === "revenue" || trendMetric === "all") && (
-                  <Line type="monotone" dataKey="revenue" name="Total revenue" stroke="oklch(0.72 0.18 250)" strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} />
+                  <Line type="monotone" dataKey="revenue" name="Total revenue" stroke="oklch(0.78 0.17 55)" strokeWidth={2.5} dot={false} activeDot={{ r: 4, fill: "oklch(0.78 0.17 55)" }} />
                 )}
                 {(trendMetric === "avgDeal" || trendMetric === "all") && (
-                  <Line type="monotone" dataKey="avgDeal" name="Avg deal size" stroke="oklch(0.78 0.14 195)" strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} />
+                  <Line type="monotone" dataKey="avgDeal" name="Avg deal size" stroke="oklch(0.74 0.14 175)" strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} />
                 )}
                 {(trendMetric === "life" || trendMetric === "all") && (
                   <Line type="monotone" dataKey="life" name="Life revenue" stroke="oklch(0.75 0.18 30)" strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} />
@@ -440,20 +450,45 @@ function MetricCard({
   const good = invertDelta ? !positive : positive;
   const hasTarget = typeof targetValue === "number" && targetValue > 0 && typeof currentValue === "number";
   const targetMet = hasTarget && (currentValue as number) >= (targetValue as number);
-  const subClass = hasTarget ? (targetMet ? "text-success font-medium" : "text-destructive font-medium") : "text-muted-foreground";
+  const targetPct = hasTarget
+    ? Math.min(100, Math.round(((currentValue as number) / (targetValue as number)) * 100))
+    : 0;
+  const subClass = hasTarget
+    ? targetMet
+      ? "text-[var(--success)] font-medium"
+      : "text-[var(--game-orange)] font-medium"
+    : "text-muted-foreground";
   return (
-    <div className="surface-card p-5">
+    <div className="game-panel group relative overflow-hidden p-5 transition hover:border-[var(--game-orange)]/25">
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[var(--game-orange)]/40 to-transparent opacity-0 transition group-hover:opacity-100" />
       <div className="flex items-center justify-between">
-        <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{title}</div>
-        <Icon className="h-4 w-4 text-muted-foreground" />
+        <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">{title}</div>
+        <div className="flex h-7 w-7 items-center justify-center rounded-md border border-white/5 bg-black/20">
+          <Icon className="h-3.5 w-3.5 text-[var(--game-orange)]" />
+        </div>
       </div>
       <div className="mt-3 flex items-end justify-between gap-2">
         <div className="num text-3xl font-bold tracking-tight">{value}</div>
         {corner && <div className="text-xs text-muted-foreground">{corner}</div>}
       </div>
-      <div className="mt-2 flex items-center gap-2 text-xs">
+      {hasTarget && (
+        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-black/40">
+          <div
+            className={`h-full rounded-full transition-all ${
+              targetMet ? "bg-[var(--success)]" : "bg-[var(--game-orange)]"
+            }`}
+            style={{ width: `${targetPct}%` }}
+          />
+        </div>
+      )}
+      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
         {showDelta && (
-          <span className={"flex items-center gap-0.5 rounded-full px-1.5 py-0.5 font-medium " + (good ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive")}>
+          <span
+            className={
+              "flex items-center gap-0.5 rounded-md px-1.5 py-0.5 font-medium " +
+              (good ? "bg-[var(--success)]/10 text-[var(--success)]" : "bg-destructive/10 text-destructive")
+            }
+          >
             {positive ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />}
             {Math.abs(delta!).toFixed(1)}%
           </span>
@@ -473,14 +508,19 @@ function TopProductsCard({
   unitLabel: string;
 }) {
   return (
-    <div className="surface-card overflow-hidden">
-      <div className="flex items-center justify-between border-b border-border p-4">
-        <h2 className="text-base font-semibold">{title}</h2>
-        <div className="text-xs text-muted-foreground">Top {items.length}</div>
+    <div className="game-panel overflow-hidden">
+      <div className="flex items-center justify-between border-b border-white/5 px-4 py-3">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--game-orange)]">Ranked</p>
+          <h2 className="text-sm font-bold">{title}</h2>
+        </div>
+        <div className="rounded-md border border-white/10 bg-black/30 px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          Top {items.length || "—"}
+        </div>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
-          <thead className="bg-muted/30 text-xs uppercase tracking-wider text-muted-foreground">
+          <thead className="bg-black/20 text-[10px] uppercase tracking-wider text-muted-foreground">
             <tr>
               <th className="px-4 py-3 text-left">#</th>
               <th className="px-4 py-3 text-left">Product</th>
@@ -490,15 +530,36 @@ function TopProductsCard({
           </thead>
           <tbody>
             {items.map((p, i) => (
-              <tr key={p.name} className="border-t border-border/50 hover:bg-secondary/30">
-                <td className="num px-4 py-3 text-xs text-muted-foreground">#{i + 1}</td>
+              <tr key={p.name} className="border-t border-white/5 hover:bg-[var(--game-orange)]/5">
+                <td className="num px-4 py-3">
+                  <span
+                    className={
+                      "inline-flex h-6 w-6 items-center justify-center rounded-md text-[10px] font-bold " +
+                      (i === 0
+                        ? "bg-[var(--gold)]/20 text-[var(--gold)]"
+                        : i === 1
+                          ? "bg-[var(--silver)]/20 text-[var(--silver)]"
+                          : i === 2
+                            ? "bg-[var(--bronze)]/20 text-[var(--bronze)]"
+                            : "bg-black/30 text-muted-foreground")
+                    }
+                  >
+                    {i + 1}
+                  </span>
+                </td>
                 <td className="px-4 py-3 font-medium">{p.name}</td>
                 <td className="num px-4 py-3 text-right">{p.count}</td>
-                <td className="num px-4 py-3 text-right font-medium">{formatCurrency(p.revenue)}</td>
+                <td className="num px-4 py-3 text-right font-semibold text-[var(--game-orange)]">
+                  {formatCurrency(p.revenue)}
+                </td>
               </tr>
             ))}
             {!loading && items.length === 0 && (
-              <tr><td colSpan={4} className="px-4 py-10 text-center text-sm text-muted-foreground">No data in this range.</td></tr>
+              <tr>
+                <td colSpan={4} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                  No data in this range.
+                </td>
+              </tr>
             )}
           </tbody>
         </table>

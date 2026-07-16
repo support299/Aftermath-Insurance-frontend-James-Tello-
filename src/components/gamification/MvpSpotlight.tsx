@@ -1,7 +1,7 @@
 import { formatCurrency } from "@/lib/sales";
 import { type AgentProgress } from "@/lib/gamification";
 import { LevelBadge } from "@/components/gamification/LevelBadge";
-import { AgentAvatar } from "@/components/gamification/TeamBattleBar";
+import { AgentRankMark } from "@/components/gamification/AgentRankMark";
 import { Flame } from "lucide-react";
 
 export function MvpSpotlight({
@@ -23,7 +23,7 @@ export function MvpSpotlight({
         This Week&apos;s MVP
       </p>
       <div className="mt-4 flex items-start gap-4">
-        <AgentAvatar name={name} highlight />
+        <AgentRankMark progress={progress} size="lg" />
         <div className="min-w-0 flex-1">
           <h3 className="truncate text-xl font-bold">{name}</h3>
           <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
@@ -39,7 +39,7 @@ export function MvpSpotlight({
             {progress && (
               <>
                 <span>·</span>
-                <LevelBadge progress={progress} size="md" />
+                <LevelBadge progress={progress} size="md" showCrest={false} />
               </>
             )}
           </div>

@@ -33,6 +33,12 @@ import {
   type ProductWithPricing,
   type SaleLineItem,
 } from "@/lib/line-items";
+import {
+  calcLocalPayout,
+  fetchCommissionsCatalog,
+  recalcSalePayout,
+  type ProductCommissionRow,
+} from "@/lib/payouts";
 
 export const Route = createFileRoute("/_app/sales/new")({
   component: SalesEntryPage,
@@ -69,7 +75,8 @@ type FormState = {
 };
 
 function SalesEntryPage() {
-  const { profile, user, session } = useAuth();
+  const { profile, user, session, roles } = useAuth();
+  const isAdmin = roles.includes("admin");
   const navigate = useNavigate();
   const updateGhlFn = updateGhlContactFromSale;
   const [teams, setTeams] = useState<{ id: string; name: string }[]>([]);
@@ -82,6 +89,8 @@ function SalesEntryPage() {
   const [errors, setErrors] = useState<Record<string, string | undefined>>({});
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
   const [reportingOnly, setReportingOnly] = useState(false);
+  const [commissions, setCommissions] = useState<ProductCommissionRow[]>([]);
+  const [myLevelCode, setMyLevelCode] = useState<string | null>(null);
 
   const [form, setForm] = useState<FormState>({
     agent_name: "",
@@ -109,7 +118,13 @@ function SalesEntryPage() {
     supabase.from("lead_sources").select("name").eq("active", true).order("name").then(({ data }) => {
       if (data) setLeadSources(data.map((r) => r.name));
     });
-  }, []);
+    fetchCommissionsCatalog(session?.access_token)
+      .then((cat) => {
+        setCommissions(cat.commissions);
+        setMyLevelCode(cat.my_level_code);
+      })
+      .catch(() => {});
+  }, [session?.access_token]);
 
   useEffect(() => {
     if (profile && !form.agent_name) {
@@ -120,6 +135,11 @@ function SalesEntryPage() {
       }));
     }
   }, [profile]);
+
+  const payoutEstimate = useMemo(
+    () => calcLocalPayout(form.line_items, commissions, myLevelCode),
+    [form.line_items, commissions, myLevelCode],
+  );
 
   const onReportingOnlyChange = (checked: boolean) => {
     setReportingOnly(checked);
@@ -228,7 +248,7 @@ function SalesEntryPage() {
     const dealSize = parsed.data.line_items.reduce((s, li) => s + li.amount, 0);
     const first = parsed.data.line_items[0];
 
-    const { error } = await supabase.from("sales").insert({
+    const { data: inserted, error } = await supabase.from("sales").insert({
       sale_id,
       agent_id: user.id,
       agent_name: parsed.data.agent_name,
@@ -246,12 +266,30 @@ function SalesEntryPage() {
       lead_source: parsed.data.lead_source ?? null,
       notes: parsed.data.notes ?? null,
       reporting_only: reportingOnly,
-    });
+      estimated_payout: payoutEstimate.estimated_payout || null,
+    }).select("id").single();
 
     if (error) {
       setSubmitting(false);
       toast.error(error.message);
       return;
+    }
+
+    if (inserted?.id && session?.access_token) {
+      try {
+        const result = await recalcSalePayout(inserted.id, session.access_token);
+        if (result.new_milestones?.length) {
+          for (const m of result.new_milestones) {
+            toast.success(
+              m.cash_reward > 0
+                ? `Milestone: ${m.name} (+$${m.cash_reward})`
+                : `Milestone unlocked: ${m.name}`,
+            );
+          }
+        }
+      } catch (err) {
+        console.error("[payout recalc]", err);
+      }
     }
 
     // Update GHL contact custom fields based on the sale (skip when reporting only).
@@ -415,9 +453,50 @@ function SalesEntryPage() {
             ))}
           </div>
           <div className="mt-3 flex items-center justify-end gap-3 border-t border-border pt-3 text-sm">
-            <span className="text-muted-foreground">Total</span>
+            <span className="text-muted-foreground">Total annual premium</span>
             <span className="num text-base font-semibold">{formatCurrency(total)}</span>
           </div>
+          {(myLevelCode || payoutEstimate.lines.some((l) => l.matched) || payoutEstimate.estimated_payout > 0) && (
+            <div className="mt-4 rounded-lg border border-primary/30 bg-primary/5 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Estimated payout
+                  </div>
+                  {isAdmin ? (
+                    <p className="mt-0.5 text-[11px] text-muted-foreground">
+                      {myLevelCode
+                        ? `Comp level: ${myLevelCode} · monthly × months × rate`
+                        : "Assign a comp level in Settings → Users to unlock rates."}
+                    </p>
+                  ) : (
+                    <p className="mt-0.5 text-[11px] text-muted-foreground">
+                      What you&apos;re estimated to make on this deal
+                    </p>
+                  )}
+                </div>
+                <div className="num text-xl font-semibold text-primary">
+                  {formatCurrency(payoutEstimate.estimated_payout)}
+                </div>
+              </div>
+              {isAdmin &&
+                payoutEstimate.lines.filter((l) => l.estimated_check > 0 || l.matched).length > 0 && (
+                  <ul className="mt-3 space-y-1 border-t border-border/60 pt-3 text-xs">
+                    {payoutEstimate.lines.map((l, i) => (
+                      <li key={i} className="flex justify-between gap-2 text-muted-foreground">
+                        <span>
+                          {l.product || "—"}
+                          {l.matched
+                            ? ` · ${l.advance_months}mo @ ${(l.rate * 100).toFixed(0)}%`
+                            : " · no rate configured"}
+                        </span>
+                        <span className="num text-foreground">{formatCurrency(l.estimated_check)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+            </div>
+          )}
         </div>
 
         <Section title="Lead info (optional)">

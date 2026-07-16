@@ -7,6 +7,20 @@ export interface AgentListRow {
   team_name: string | null;
   sales_count: number;
   revenue: number;
+  /** First deal date — starts the 13-week clock */
+  first_sale_at: string | null;
+  current_week: number;
+  phase: number | null;
+  phase_label: string | null;
+  phase_submitted: number;
+  phase_pct: number;
+  phase_goal: number;
+  tracker_active: boolean;
+  estimated_payout_ytd: number;
+  level_rank: number;
+  level_name: string;
+  level_tier: "level" | "prestige" | "hof" | string;
+  total_xp: number;
 }
 
 export interface AgentListResult {

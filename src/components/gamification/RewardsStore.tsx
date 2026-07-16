@@ -27,6 +27,14 @@ const STATUS_COLORS: Record<RedemptionInfo["status"], string> = {
   fulfilled: "text-[var(--gold)]",
 };
 
+function isTeamReward(reward: Pick<RewardInfo, "scope"> | null | undefined) {
+  return reward?.scope === "team";
+}
+
+function approverLabel(reward: Pick<RewardInfo, "scope"> | null | undefined) {
+  return isTeamReward(reward) ? "your team manager" : "an admin";
+}
+
 export function RewardsStore({
   rewards,
   redemptions,
@@ -60,13 +68,17 @@ export function RewardsStore({
         status: result.status,
         agent_note: note.trim(),
         admin_note: "",
+        team_name: selected.team_name ?? null,
+        scope: selected.scope ?? "global",
         created_at: new Date().toISOString(),
         reviewed_at: null,
       };
       setSelected(null);
       setNote("");
       onRedeemed(redemption);
-      toast.success(`Redeemed ${result.reward_name} — pending approval`);
+      toast.success(
+        `Redeemed ${result.reward_name} — pending ${approverLabel(selected)} approval`,
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not redeem reward");
     } finally {
@@ -84,7 +96,7 @@ export function RewardsStore({
               Rewards Store
             </h2>
             <p className="mt-1 text-xs text-muted-foreground">
-              Spend points on perks — redemptions need manager approval
+              Company rewards need admin approval · Team rewards need your team manager
             </p>
           </div>
           <div className="rounded-lg border border-[var(--game-orange)]/30 bg-[var(--game-orange)]/10 px-4 py-2 text-right">
@@ -97,13 +109,16 @@ export function RewardsStore({
           {rewards.map((reward) => {
             const locked = !reward.can_afford;
             const pct = Math.min(100, (pointsBalance / reward.points_cost) * 100);
+            const team = isTeamReward(reward);
             return (
               <div
                 key={reward.id}
                 className={`relative overflow-hidden rounded-xl border p-4 transition ${
                   locked
                     ? "border-white/5 bg-black/20 opacity-80"
-                    : "border-[var(--game-orange)]/30 bg-gradient-to-br from-[var(--game-orange)]/10 to-transparent hover:border-[var(--game-orange)]/50"
+                    : team
+                      ? "border-[var(--game-teal)]/35 bg-gradient-to-br from-[var(--game-teal)]/10 to-transparent hover:border-[var(--game-teal)]/50"
+                      : "border-[var(--game-orange)]/30 bg-gradient-to-br from-[var(--game-orange)]/10 to-transparent hover:border-[var(--game-orange)]/50"
                 }`}
               >
                 {locked && (
@@ -113,6 +128,15 @@ export function RewardsStore({
                 )}
                 <div className="text-3xl">{reward.icon}</div>
                 <p className="mt-2 font-semibold">{reward.name}</p>
+                <p
+                  className={`mt-1 text-[10px] font-semibold uppercase tracking-wider ${
+                    team ? "text-[var(--game-teal)]" : "text-muted-foreground"
+                  }`}
+                >
+                  {team
+                    ? `Team${reward.team_name ? ` · ${reward.team_name}` : ""}`
+                    : "Company-wide"}
+                </p>
                 <p className="mt-1 text-xs text-muted-foreground line-clamp-2">{reward.description}</p>
                 <p className="mt-3 text-sm font-bold text-[var(--game-orange)]">
                   {reward.points_cost.toLocaleString()} pts
@@ -159,6 +183,10 @@ export function RewardsStore({
                     <p className="text-sm font-medium">{r.reward_name}</p>
                     <p className="text-xs text-muted-foreground">
                       {r.points_cost.toLocaleString()} pts · {new Date(r.created_at).toLocaleDateString()}
+                      {" · "}
+                      {r.scope === "team"
+                        ? `Team${r.team_name ? ` · ${r.team_name}` : ""}`
+                        : "Company-wide"}
                     </p>
                   </div>
                 </div>
@@ -176,12 +204,17 @@ export function RewardsStore({
           <DialogHeader>
             <DialogTitle>Redeem {selected?.name}?</DialogTitle>
             <DialogDescription>
-              This will deduct {selected?.points_cost.toLocaleString()} points. Your request goes to admin for approval.
+              This will deduct {selected?.points_cost.toLocaleString()} points. Your request goes to{" "}
+              {approverLabel(selected)} for approval.
             </DialogDescription>
           </DialogHeader>
           <textarea
             className="min-h-[72px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-            placeholder="Optional note for your manager…"
+            placeholder={
+              isTeamReward(selected)
+                ? "Optional note for your team manager…"
+                : "Optional note for admin…"
+            }
             value={note}
             onChange={(e) => setNote(e.target.value)}
           />

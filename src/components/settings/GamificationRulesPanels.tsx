@@ -31,6 +31,7 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { toast } from "sonner";
+import { AgentRankMark } from "@/components/gamification/AgentRankMark";
 
 const XP_RULES: {
   key: keyof EarningRules;
@@ -554,8 +555,18 @@ export function AgentBalancesPanel() {
               {rows.map((r) => (
                 <TableRow key={r.agent_id}>
                   <TableCell>
-                    <div className="font-medium">{r.display_name}</div>
-                    <div className="text-xs text-muted-foreground">{r.email}</div>
+                    <div className="flex items-center gap-2">
+                      <AgentRankMark
+                        levelRank={r.level_rank}
+                        levelName={r.level_name}
+                        levelTier={r.level_tier}
+                        size="sm"
+                      />
+                      <div>
+                        <div className="font-medium">{r.display_name}</div>
+                        <div className="text-xs text-muted-foreground">{r.email}</div>
+                      </div>
+                    </div>
                   </TableCell>
                   <TableCell>{r.level_name}</TableCell>
                   <TableCell>

@@ -110,9 +110,12 @@ function RedemptionsAdminPanel() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Sparkles className="h-5 w-5" />
-          Reward redemptions
+          Company reward redemptions
         </CardTitle>
-        <CardDescription>Approve or reject agent reward requests. Rejected requests refund points.</CardDescription>
+        <CardDescription>
+          Approve or reject company-wide reward requests. Team rewards are approved by that team&apos;s
+          manager. Rejected requests refund points.
+        </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <Select value={filter} onValueChange={(v) => setFilter(v as "pending" | "all")}>
@@ -142,7 +145,7 @@ function RedemptionsAdminPanel() {
               {rows.map((r) => (
                 <TableRow key={r.id}>
                   <TableCell>
-                    <div className="text-sm font-medium">{r.agent_email || r.agent_id}</div>
+                    <div className="text-sm font-medium">{r.agent_name || r.agent_email || r.agent_id}</div>
                     <div className="text-xs text-muted-foreground">{new Date(r.created_at).toLocaleString()}</div>
                     {r.agent_note && <div className="mt-1 text-xs italic text-muted-foreground">"{r.agent_note}"</div>}
                   </TableCell>
@@ -266,7 +269,9 @@ function RewardsAdminPanel() {
     <Card>
       <CardHeader>
         <CardTitle>Rewards catalog</CardTitle>
-        <CardDescription>Manage perks agents can redeem with points.</CardDescription>
+        <CardDescription>
+          Company-wide store items (all agents). Team managers can add team-only rewards under their Settings → Rewards.
+        </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
         <form onSubmit={add} className="grid gap-3 rounded-lg border border-border p-4 sm:grid-cols-2 lg:grid-cols-5">
@@ -298,6 +303,7 @@ function RewardsAdminPanel() {
             <TableHeader>
               <TableRow>
                 <TableHead>Reward</TableHead>
+                <TableHead>Scope</TableHead>
                 <TableHead>Cost</TableHead>
                 <TableHead>Order</TableHead>
                 <TableHead>Active</TableHead>
@@ -347,6 +353,9 @@ function RewardRow({
             <Input className="text-xs" value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Description" />
           </div>
         </div>
+      </TableCell>
+      <TableCell>
+        <Badge variant="secondary">{row.scope === "team" ? (row.team_name || "Team") : "Company"}</Badge>
       </TableCell>
       <TableCell><Input type="number" min={1} className="w-24" value={cost} onChange={(e) => setCost(e.target.value)} /></TableCell>
       <TableCell><Input type="number" className="w-16" value={order} onChange={(e) => setOrder(e.target.value)} /></TableCell>

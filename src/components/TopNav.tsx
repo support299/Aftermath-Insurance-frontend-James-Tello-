@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { fetchMyProgress, type AgentProgress } from "@/lib/gamification";
 import { LevelBadge } from "@/components/gamification/LevelBadge";
+import { AgentRankMark } from "@/components/gamification/AgentRankMark";
 import logo from "@/assets/aftermath-logo.png";
 
 export function TopNav() {
@@ -82,6 +83,9 @@ export function TopNav() {
         </nav>
 
         <div className="flex items-center gap-3">
+          {myProgress && myProgress.level_rank > 0 && (
+            <AgentRankMark progress={myProgress} size="md" className="hidden sm:block" />
+          )}
           <div className="hidden text-right sm:block">
             <div className="text-sm font-medium leading-tight">{profile?.display_name ?? user?.email}</div>
             {ghlUserId && (
@@ -92,7 +96,7 @@ export function TopNav() {
             </Badge>
             {myProgress && myProgress.level_rank > 0 && (
               <div className="mt-1">
-                <LevelBadge progress={myProgress} />
+                <LevelBadge progress={myProgress} showCrest={false} />
               </div>
             )}
           </div>

@@ -15,6 +15,11 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { DateField } from "@/components/DateField";
+import { OnboardingProgressPanel } from "@/components/OnboardingProgressPanel";
+import { AgentRankMark } from "@/components/gamification/AgentRankMark";
+import { LevelBadge } from "@/components/gamification/LevelBadge";
+import { fetchAllProgress, type AgentProgress } from "@/lib/gamification";
+import { useAuth } from "@/lib/auth";
 
 export const Route = createFileRoute("/_app/agents/$agentId")({
   component: AgentDashboardPage,
@@ -42,6 +47,7 @@ type TargetSet = {
 
 function AgentDashboardPage() {
   const { agentId } = Route.useParams();
+  const { session } = useAuth();
   const { reportingTimezone } = useCompanySettings();
   const [rangeKey, setRangeKey] = useState<DateRangeKey>("month");
   const [customFrom, setCustomFrom] = useState<Date | undefined>(undefined);
@@ -58,6 +64,7 @@ function AgentDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [targets, setTargets] = useState<TargetSet | null>(null);
   const [trendMetric, setTrendMetric] = useState<"revenue" | "avgDeal" | "life" | "health" | "totalCost" | "all">("revenue");
+  const [agentProgress, setAgentProgress] = useState<AgentProgress | null>(null);
 
   const range = useMemo(
     () => rangeFromKey(rangeKey, { from: customFrom, to: customTo }),
@@ -67,6 +74,21 @@ function AgentDashboardPage() {
   const refreshTick = useRefreshTick(LIVE_REFRESH_MS);
   const [salesVersion, setSalesVersion] = useState(0);
   useOnSalesChanged(() => setSalesVersion((v) => v + 1));
+
+  useEffect(() => {
+    let active = true;
+    fetchAllProgress(session?.access_token)
+      .then((map) => {
+        if (!active) return;
+        setAgentProgress(map[agentId] ?? null);
+      })
+      .catch(() => {
+        if (active) setAgentProgress(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [agentId, session?.access_token, salesVersion]);
 
   useEffect(() => {
     let active = true;
@@ -186,8 +208,16 @@ function AgentDashboardPage() {
           <Button asChild variant="ghost" size="sm" className="-ml-2 mb-2">
             <Link to="/agents"><ArrowLeft className="mr-1 h-4 w-4" /> All agents</Link>
           </Button>
-          <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">{agentInfo.name}</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Team: {agentInfo.team}</p>
+          <div className="flex items-center gap-3">
+            <AgentRankMark progress={agentProgress} size="lg" />
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">{agentInfo.name}</h1>
+                {agentProgress && <LevelBadge progress={agentProgress} size="md" showCrest={false} />}
+              </div>
+              <p className="mt-1 text-sm text-muted-foreground">Team: {agentInfo.team}</p>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -298,6 +328,8 @@ function AgentDashboardPage() {
           sub={`Total cost: ${formatCurrency(cpa.totalCost)}`}
           corner={<span>{cpa.numSales.toLocaleString()} sale{cpa.numSales === 1 ? "" : "s"}</span>} />
       </div>
+
+      <OnboardingProgressPanel agentId={agentId} />
 
       {/* Trend chart */}
       <div className="surface-card p-4 sm:p-6">

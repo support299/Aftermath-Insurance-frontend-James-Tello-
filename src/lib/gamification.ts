@@ -82,6 +82,8 @@ export interface RewardInfo {
   icon: string;
   points_cost: number;
   can_afford: boolean;
+  team_name?: string | null;
+  scope?: "global" | "team";
 }
 
 export interface RedemptionInfo {
@@ -93,6 +95,8 @@ export interface RedemptionInfo {
   status: "pending" | "approved" | "rejected" | "fulfilled";
   agent_note: string;
   admin_note: string;
+  team_name?: string | null;
+  scope?: "global" | "team";
   created_at: string;
   reviewed_at: string | null;
 }
@@ -212,6 +216,53 @@ export function tierColor(tier: AgentProgress["level_tier"]): string {
     default:
       return "var(--primary)";
   }
+}
+
+/** Crest asset keys for James's XP rank logos (5 metals across the ladder). */
+export type RankCrestKey = "bronze" | "silver" | "gold" | "prestige" | "hof";
+
+/** Friendly metal names shown under XP ranks (not tied to Prestige/HOF level names). */
+export const RANK_CREST_LABEL: Record<RankCrestKey, string> = {
+  bronze: "Bronze",
+  silver: "Silver",
+  gold: "Gold",
+  prestige: "Platinum",
+  hof: "Mythic",
+};
+
+/**
+ * Map XP ladder rank → crest.
+ * Spreads all 5 logos across the main 9 ranks (minimal repeats):
+ *   1–2 Bronze · 3–4 Silver · 5–6 Gold · 7–8 Platinum · 9 Mythic
+ * Ranks 10+ (extended ladder) keep Platinum, then Mythic at the top.
+ */
+export function crestKeyForRank(rank: number, tierType?: string): RankCrestKey {
+  if (tierType === "hof" || rank >= 15) return "hof";
+  if (rank <= 2) return "bronze";
+  if (rank <= 4) return "silver";
+  if (rank <= 6) return "gold";
+  if (rank <= 8) return "prestige";
+  if (rank === 9) return "hof";
+  // ranks 10–14 (extended XP ladder)
+  return "prestige";
+}
+
+export function rankCrestKey(
+  progress: Pick<AgentProgress, "level_rank" | "level_tier"> | null | undefined,
+): RankCrestKey | null {
+  if (!progress || !progress.level_rank || progress.level_rank <= 0) return null;
+  return crestKeyForRank(progress.level_rank, progress.level_tier);
+}
+
+export function rankCrestSrc(key: RankCrestKey): string {
+  return `/ranks/${key}.png`;
+}
+
+export function rankCrestForLevel(level: {
+  rank: number;
+  tier_type: string;
+}): RankCrestKey {
+  return crestKeyForRank(level.rank, level.tier_type);
 }
 
 export function relativeTime(iso: string): string {

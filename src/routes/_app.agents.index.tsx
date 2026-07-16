@@ -1,9 +1,10 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Users, Search, ArrowRight } from "lucide-react";
+import { Search, ArrowRight } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { fetchAgentsList, type AgentListRow } from "@/lib/agents";
+import { AgentRankMark } from "@/components/gamification/AgentRankMark";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
@@ -16,6 +17,30 @@ export const Route = createFileRoute("/_app/agents/")({
 
 const PAGE_SIZE = 15;
 const SEARCH_DEBOUNCE_MS = 350;
+
+function fmtK(n: number) {
+  if (!n) return "—";
+  if (Math.abs(n) >= 1000) return `$${(n / 1000).toFixed(1)}K`;
+  return formatCurrency(n);
+}
+
+function PhaseBadge({ label }: { label: string | null }) {
+  if (!label) {
+    return <span className="text-xs text-muted-foreground">Not started</span>;
+  }
+  const foundation = label === "Foundation";
+  return (
+    <span
+      className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
+        foundation
+          ? "border-sky-500/40 bg-sky-500/10 text-sky-300"
+          : "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+      }`}
+    >
+      {label}
+    </span>
+  );
+}
 
 function AgentsIndexPage() {
   const { roles, loading: authLoading, session } = useAuth();
@@ -99,7 +124,9 @@ function AgentsIndexPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Agents</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Select an agent to view their dedicated dashboard.</p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Roster with live 13-week tracker — week, phase progress, and estimated payout.
+        </p>
       </div>
 
       <div className="surface-card grid grid-cols-1 gap-3 p-4 sm:grid-cols-3">
@@ -153,6 +180,10 @@ function AgentsIndexPage() {
               <tr>
                 <th className="px-4 py-3 text-left">Agent</th>
                 <th className="px-4 py-3 text-left">Team</th>
+                <th className="px-4 py-3 text-left">Week</th>
+                <th className="px-4 py-3 text-left">Phase</th>
+                <th className="px-4 py-3 text-right">Phase submitted</th>
+                <th className="px-4 py-3 text-right">Est. payout</th>
                 <th className="px-4 py-3 text-right">Sales</th>
                 <th className="px-4 py-3 text-right">Revenue</th>
                 <th className="px-4 py-3"></th>
@@ -163,13 +194,67 @@ function AgentsIndexPage() {
                 <tr key={a.agent_id} className="border-t border-border/50 hover:bg-secondary/30">
                   <td className="px-4 py-3 font-medium">
                     <div className="flex items-center gap-2">
-                      <div className="flex h-7 w-7 items-center justify-center rounded-full bg-secondary text-xs">
-                        <Users className="h-3.5 w-3.5" />
+                      <AgentRankMark
+                        levelRank={a.level_rank}
+                        levelName={a.level_name}
+                        levelTier={a.level_tier}
+                        size="sm"
+                      />
+                      <div>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span>{a.agent_name}</span>
+                          {a.level_rank > 0 && (
+                            <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                              {a.level_name}
+                            </span>
+                          )}
+                        </div>
+                        {a.first_sale_at && (
+                          <div className="text-[10px] font-normal text-muted-foreground">
+                            Started {new Date(a.first_sale_at).toLocaleDateString()}
+                          </div>
+                        )}
                       </div>
-                      {a.agent_name}
                     </div>
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">{a.team_name ?? "Unassigned"}</td>
+                  <td className="num px-4 py-3">
+                    {a.current_week > 0 ? (
+                      <span className={a.tracker_active ? "font-medium" : "text-muted-foreground"}>
+                        Wk {a.current_week}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    <PhaseBadge label={a.phase_label} />
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    {a.current_week > 0 ? (
+                      <div className="inline-flex w-36 flex-col items-end gap-1">
+                        <div className="num text-sm font-medium">{fmtK(a.phase_submitted)}</div>
+                        <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                          <div
+                            className={`h-full rounded-full ${
+                              a.phase_label === "Beacon" ? "bg-emerald-500" : "bg-sky-500"
+                            }`}
+                            style={{ width: `${Math.min(100, a.phase_pct)}%` }}
+                          />
+                        </div>
+                        <div className="text-[10px] text-muted-foreground">
+                          {a.phase_pct}% of {fmtK(a.phase_goal)}
+                        </div>
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </td>
+                  <td className="num px-4 py-3 text-right font-medium">
+                    {a.estimated_payout_ytd > 0
+                      ? formatCurrency(a.estimated_payout_ytd)
+                      : <span className="text-muted-foreground">—</span>}
+                  </td>
                   <td className="num px-4 py-3 text-right">{a.sales_count.toLocaleString()}</td>
                   <td className="num px-4 py-3 text-right font-medium">{formatCurrency(a.revenue)}</td>
                   <td className="px-4 py-3 text-right">
@@ -183,7 +268,7 @@ function AgentsIndexPage() {
               ))}
               {!loading && rows.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-12 text-center text-sm text-muted-foreground">
+                  <td colSpan={9} className="px-4 py-12 text-center text-sm text-muted-foreground">
                     No agents match your filters.
                   </td>
                 </tr>

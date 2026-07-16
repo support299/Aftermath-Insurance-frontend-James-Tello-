@@ -9,6 +9,9 @@ export interface AdminReward {
   points_cost: number;
   sort_order: number;
   is_active: boolean;
+  team_id: string | null;
+  team_name: string | null;
+  scope: "global" | "team";
   created_at: string;
 }
 
@@ -52,6 +55,7 @@ export interface AdminRedemption {
   id: string;
   agent_id: string;
   agent_email: string;
+  agent_name?: string;
   reward_id: string;
   reward_name: string;
   reward_icon: string;
@@ -59,6 +63,9 @@ export interface AdminRedemption {
   status: "pending" | "approved" | "rejected" | "fulfilled";
   agent_note: string;
   admin_note: string;
+  team_id?: string | null;
+  team_name?: string | null;
+  scope?: "global" | "team";
   created_at: string;
   reviewed_at: string | null;
 }
@@ -263,6 +270,7 @@ export interface AdminAgentProgress {
   points_balance: number;
   level_name: string;
   level_rank: number;
+  level_tier?: string;
 }
 
 export async function fetchGamificationConfig(accessToken?: string): Promise<{

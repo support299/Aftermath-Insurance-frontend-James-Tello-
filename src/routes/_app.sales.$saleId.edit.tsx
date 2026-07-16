@@ -32,6 +32,7 @@ import {
   type ProductWithPricing,
   type SaleLineItem,
 } from "@/lib/line-items";
+import { recalcSalePayout } from "@/lib/payouts";
 
 export const Route = createFileRoute("/_app/sales/$saleId/edit")({
   component: SalesEditPage,
@@ -222,6 +223,12 @@ function SalesEditPage() {
       })
       .eq("id", sale.id);
     if (error) { setSaving(false); toast.error(error.message); return; }
+
+    try {
+      await recalcSalePayout(sale.id, session?.access_token);
+    } catch (err) {
+      console.error("[payout recalc]", err);
+    }
 
     // Keep the GHL contact's custom fields in sync (skip when reporting only).
     if (!reportingOnly) {

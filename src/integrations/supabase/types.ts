@@ -340,6 +340,7 @@ export type Database = {
           must_change_password: boolean
           phone: string | null
           team_id: string | null
+          comp_level_id: string | null
           updated_at: string
         }
         Insert: {
@@ -350,6 +351,7 @@ export type Database = {
           must_change_password?: boolean
           phone?: string | null
           team_id?: string | null
+          comp_level_id?: string | null
           updated_at?: string
         }
         Update: {
@@ -360,6 +362,7 @@ export type Database = {
           must_change_password?: boolean
           phone?: string | null
           team_id?: string | null
+          comp_level_id?: string | null
           updated_at?: string
         }
         Relationships: [
@@ -383,6 +386,7 @@ export type Database = {
           created_at: string
           customer_name: string | null
           deal_size: number | null
+          estimated_payout: number | null
           ghl_contact_id: string | null
           id: string
           lead_source: string | null
@@ -404,6 +408,7 @@ export type Database = {
           created_at?: string
           customer_name?: string | null
           deal_size?: number | null
+          estimated_payout?: number | null
           ghl_contact_id?: string | null
           id?: string
           lead_source?: string | null
@@ -414,6 +419,8 @@ export type Database = {
           sale_id: string
           team_id?: string | null
           team_name?: string | null
+          reporting_only?: boolean
+          import_batch_id?: string | null
         }
         Update: {
           add_on_amounts?: Json
@@ -425,6 +432,7 @@ export type Database = {
           created_at?: string
           customer_name?: string | null
           deal_size?: number | null
+          estimated_payout?: number | null
           ghl_contact_id?: string | null
           id?: string
           lead_source?: string | null
@@ -435,6 +443,8 @@ export type Database = {
           sale_id?: string
           team_id?: string | null
           team_name?: string | null
+          reporting_only?: boolean
+          import_batch_id?: string | null
         }
         Relationships: [
           {

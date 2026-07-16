@@ -27,7 +27,11 @@ import { toast } from "sonner";
 import { PRODUCT_ADDITIONAL_PRICING_ENABLED } from "@/lib/feature-flags";
 import { GamificationSettingsPanel } from "@/components/settings/GamificationSettingsPanel";
 import { ManagerContestsPanel } from "@/components/settings/ManagerContestsPanel";
+import { ManagerRedemptionsPanel } from "@/components/settings/ManagerRedemptionsPanel";
+import { ManagerRewardsPanel } from "@/components/settings/ManagerRewardsPanel";
+import { PayoutSettingsPanel } from "@/components/settings/PayoutSettingsPanel";
 import type { AppRole } from "@/lib/auth";
+import { fetchAdminCompLevels, setAgentCompLevel, type CompLevel } from "@/lib/payouts";
 
 export const Route = createFileRoute("/_app/settings")({
   component: SettingsPage,
@@ -38,6 +42,7 @@ interface UserRow {
   display_name: string;
   team_id: string | null;
   role: AppRole;
+  comp_level_id: string | null;
 }
 interface TeamRow {
   id: string;
@@ -76,16 +81,22 @@ function SettingsPage() {
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
             <p className="text-sm text-muted-foreground">
-              {isManager ? "Manage your team contests and password." : "Manage your password."}
+              {isManager
+                ? "Manage your team contests, rewards, redemptions, and password."
+                : "Manage your password."}
             </p>
           </div>
         </div>
-        <Tabs defaultValue={isManager ? "contests" : "password"} className="space-y-4">
+        <Tabs defaultValue={isManager ? "redemptions" : "password"} className="space-y-4">
           <TabsList>
+            {isManager && <TabsTrigger value="redemptions">Redemptions</TabsTrigger>}
             {isManager && <TabsTrigger value="contests">Contests</TabsTrigger>}
+            {isManager && <TabsTrigger value="rewards">Rewards</TabsTrigger>}
             <TabsTrigger value="password">Password</TabsTrigger>
           </TabsList>
+          {isManager && <TabsContent value="redemptions"><ManagerRedemptionsPanel /></TabsContent>}
           {isManager && <TabsContent value="contests"><ManagerContestsPanel /></TabsContent>}
+          {isManager && <TabsContent value="rewards"><ManagerRewardsPanel /></TabsContent>}
           <TabsContent value="password"><PasswordPanel /></TabsContent>
         </Tabs>
       </div>
@@ -113,7 +124,10 @@ function SettingsPage() {
           <TabsTrigger value="addons">Add-ons</TabsTrigger>
           <TabsTrigger value="lead_sources">Lead Sources</TabsTrigger>
           <TabsTrigger value="targets">Targets</TabsTrigger>
+          <TabsTrigger value="payouts">Payouts & Tracker</TabsTrigger>
           <TabsTrigger value="gamification">Performance & Rewards</TabsTrigger>
+          {isManager && <TabsTrigger value="team_redemptions">Team redemptions</TabsTrigger>}
+          {isManager && <TabsTrigger value="team_rewards">Team rewards</TabsTrigger>}
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="password">Password</TabsTrigger>
         </TabsList>
@@ -125,7 +139,10 @@ function SettingsPage() {
         <TabsContent value="addons"><NamedListPanel table="add_ons" label="Add-on" /></TabsContent>
         <TabsContent value="lead_sources"><NamedListPanel table="lead_sources" label="Lead Source" /></TabsContent>
         <TabsContent value="targets"><TargetsPanel /></TabsContent>
+        <TabsContent value="payouts"><PayoutSettingsPanel /></TabsContent>
         <TabsContent value="gamification"><GamificationSettingsPanel /></TabsContent>
+        {isManager && <TabsContent value="team_redemptions"><ManagerRedemptionsPanel /></TabsContent>}
+        {isManager && <TabsContent value="team_rewards"><ManagerRewardsPanel /></TabsContent>}
         <TabsContent value="general"><ReportingTimezonePanel /></TabsContent>
         <TabsContent value="password"><PasswordPanel /></TabsContent>
       </Tabs>
@@ -276,8 +293,10 @@ function PasswordPanel() {
 
 /* ---------------- Users ---------------- */
 function UsersPanel() {
+  const { session } = useAuth();
   const [users, setUsers] = useState<UserRow[]>([]);
   const [teams, setTeams] = useState<TeamRow[]>([]);
+  const [compLevels, setCompLevels] = useState<CompLevel[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [edits, setEdits] = useState<Record<string, Partial<UserRow>>>({});
@@ -298,10 +317,11 @@ function UsersPanel() {
 
   const load = async () => {
     setLoading(true);
-    const [{ data: profiles }, { data: roleRows }, { data: teamData }] = await Promise.all([
-      supabase.from("profiles").select("id, display_name, team_id"),
+    const [{ data: profiles }, { data: roleRows }, { data: teamData }, levels] = await Promise.all([
+      supabase.from("profiles").select("id, display_name, team_id, comp_level_id"),
       supabase.from("user_roles").select("user_id, role"),
       supabase.from("teams").select("id, name").order("name"),
+      fetchAdminCompLevels(session?.access_token).catch(() => [] as CompLevel[]),
     ]);
     const roleMap = new Map<string, AppRole>();
     (roleRows ?? []).forEach((r) => {
@@ -315,12 +335,14 @@ function UsersPanel() {
         display_name: p.display_name,
         team_id: p.team_id,
         role: roleMap.get(p.id) ?? "agent",
+        comp_level_id: (p as { comp_level_id?: string | null }).comp_level_id ?? null,
       })),
     );
     setTeams((teamData ?? []).map((t) => ({ id: t.id, name: t.name, manager_ids: [] })));
+    setCompLevels(levels.filter((l) => l.is_active));
     setLoading(false);
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [session?.access_token]);
 
   const setEdit = (id: string, patch: Partial<UserRow>) => {
     setEdits((e) => ({ ...e, [id]: { ...e[id], ...patch } }));
@@ -334,6 +356,8 @@ function UsersPanel() {
     const newName = patch.display_name ?? u.display_name;
     const newTeam = patch.team_id !== undefined ? patch.team_id : u.team_id;
     const newRole = patch.role ?? u.role;
+    const newLevel =
+      patch.comp_level_id !== undefined ? patch.comp_level_id : u.comp_level_id;
 
     const { error: pErr } = await supabase
       .from("profiles")
@@ -347,6 +371,10 @@ function UsersPanel() {
         .from("user_roles")
         .insert({ user_id: u.id, role: newRole });
       if (rErr) throw rErr;
+    }
+
+    if (newLevel !== u.comp_level_id) {
+      await setAgentCompLevel(u.id, newLevel, session?.access_token);
     }
   };
 
@@ -406,7 +434,7 @@ function UsersPanel() {
       <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
         <div>
           <CardTitle>Users</CardTitle>
-          <CardDescription>Edit display names, assign teams, and change roles.</CardDescription>
+          <CardDescription>Edit display names, assign teams, roles, and comp levels.</CardDescription>
         </div>
         <Button
           size="sm"
@@ -467,6 +495,7 @@ function UsersPanel() {
                   <TableHead>Name</TableHead>
                   <TableHead>Team</TableHead>
                   <TableHead>Role</TableHead>
+                  <TableHead>Comp level</TableHead>
                   <TableHead className="w-[180px] text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -506,6 +535,27 @@ function UsersPanel() {
                             <SelectItem value="agent">agent</SelectItem>
                             <SelectItem value="manager">manager</SelectItem>
                             <SelectItem value="admin">admin</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </TableCell>
+                      <TableCell>
+                        <Select
+                          value={
+                            (e.comp_level_id !== undefined ? e.comp_level_id : u.comp_level_id) ??
+                            "none"
+                          }
+                          onValueChange={(v) =>
+                            setEdit(u.id, { comp_level_id: v === "none" ? null : v })
+                          }
+                        >
+                          <SelectTrigger className="min-w-[140px]"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">— None —</SelectItem>
+                            {compLevels.map((lv) => (
+                              <SelectItem key={lv.id} value={lv.id}>
+                                {lv.name} ({lv.code})
+                              </SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       </TableCell>

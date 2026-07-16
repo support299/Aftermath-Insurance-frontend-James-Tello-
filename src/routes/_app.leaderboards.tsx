@@ -23,6 +23,9 @@ import { TeamBattleBar, type TeamBattleSide } from "@/components/gamification/Te
 import { MvpSpotlight } from "@/components/gamification/MvpSpotlight";
 import { LiveActivityFeed } from "@/components/gamification/LiveActivityFeed";
 import { TopAgentsBoard } from "@/components/gamification/TopAgentsBoard";
+import { TopTeamsBoard } from "@/components/gamification/TopTeamsBoard";
+import { AgentRankMark } from "@/components/gamification/AgentRankMark";
+import { LevelBadge } from "@/components/gamification/LevelBadge";
 
 export const Route = createFileRoute("/_app/leaderboards")({
   component: LeaderboardsPage,
@@ -38,7 +41,7 @@ const TIMEFRAMES: { key: DateRangeKey; label: string }[] = [
 const PAGE_SIZES = [10, 20, 30, 50, 100] as const;
 
 function LeaderboardsPage() {
-  const { user, session } = useAuth();
+  const { user, session, profile } = useAuth();
   const { reportingTimezone } = useCompanySettings();
   const [timeframe, setTimeframe] = usePersistentState<DateRangeKey>("lb.timeframe", "week");
   const [customFrom, setCustomFrom] = useState<Date | undefined>(undefined);
@@ -238,6 +241,21 @@ function LeaderboardsPage() {
     [filteredAgents, progressByAgent],
   );
 
+  const rankedForTeams = useMemo(
+    () =>
+      teamStats.map((t) => ({
+        team_id: t.team_id,
+        team_name: t.team_name,
+        revenue: t.revenue,
+        count: t.count,
+        avgDeal: t.avgDeal,
+        cpa: t.cpa,
+        agent_count: agentsPerTeam.get(t.team_id ?? "none") ?? 0,
+      })),
+    [teamStats, agentsPerTeam],
+  );
+
+  const myTeamId = profile?.team_id ?? null;
   const weeklyGoal = teamBattle ? (teamBattle.left.revenue + teamBattle.right.revenue) * 1.5 : undefined;
 
   return (
@@ -387,6 +405,7 @@ function LeaderboardsPage() {
           </div>
 
           <TopAgentsBoard agents={rankedForBoard} highlightId={user?.id} />
+          <TopTeamsBoard teams={rankedForTeams} highlightTeamId={myTeamId} />
         </>
       )}
 
@@ -421,10 +440,10 @@ function LeaderboardsPage() {
               </Button>
             )}
           </div>
-          <div className="surface-card overflow-hidden">
+          <div className="game-panel overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="bg-muted/30 text-xs uppercase tracking-wider text-muted-foreground">
+                <thead className="bg-black/20 text-[10px] uppercase tracking-wider text-muted-foreground">
                   <tr>
                     <th className="w-16 px-4 py-3 text-left">Rank</th>
                     <th className="px-4 py-3 text-left">Agent</th>
@@ -444,7 +463,17 @@ function LeaderboardsPage() {
                 <tbody>
                   {paginatedAgents.map((a, i) => (
                     <Row key={a.agent_id} rank={(currentAgentPage - 1) * agentPageSize + i + 1} highlight={a.agent_id === user?.id}>
-                      <td className="px-4 py-3 font-medium">{a.agent_name}</td>
+                      <td className="px-4 py-3 font-medium">
+                        <div className="flex items-center gap-2">
+                          <AgentRankMark progress={progressByAgent[a.agent_id]} size="sm" />
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className="truncate">{a.agent_name}</span>
+                              <LevelBadge progress={progressByAgent[a.agent_id]} showCrest={false} />
+                            </div>
+                          </div>
+                        </div>
+                      </td>
                       <td className="px-4 py-3 text-muted-foreground">{a.team_name}</td>
                       <td className="num px-4 py-3 text-right font-semibold">{formatCurrency(a.revenue)}</td>
                       <td className="num px-4 py-3 text-right">{a.count}</td>
@@ -476,31 +505,92 @@ function LeaderboardsPage() {
         </TabsContent>
 
         <TabsContent value="teams" className="mt-4">
-          <div className="surface-card overflow-hidden">
+          <div className="game-panel overflow-hidden">
+            <div className="flex items-center justify-between border-b border-white/5 px-4 py-3">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--game-teal)]">
+                  Full standings
+                </p>
+                <h2 className="text-sm font-bold">All teams</h2>
+              </div>
+            </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="bg-muted/30 text-xs uppercase tracking-wider text-muted-foreground">
+                <thead className="bg-black/20 text-[10px] uppercase tracking-wider text-muted-foreground">
                   <tr>
                     <th className="w-16 px-4 py-3 text-left">Rank</th>
                     <th className="px-4 py-3 text-left">Team</th>
+                    <th className="px-4 py-3 text-right">Active</th>
                     <th className="px-4 py-3 text-right">Revenue</th>
                     <th className="px-4 py-3 text-right">Sales</th>
                     <th className="px-4 py-3 text-right">Avg Deal</th>
                     <th className="px-4 py-3 text-right">Avg CPA</th>
+                    <th className="px-4 py-3 text-right">Share</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {paginatedTeams.map((t, i) => (
-                    <Row key={(t.team_id ?? "none") + i} rank={(currentTeamPage - 1) * teamPageSize + i + 1}>
-                      <td className="px-4 py-3 font-medium">{t.team_name}</td>
-                      <td className="num px-4 py-3 text-right font-semibold">{formatCurrency(t.revenue)}</td>
-                      <td className="num px-4 py-3 text-right">{t.count}</td>
-                      <td className="num px-4 py-3 text-right">{formatCurrency(t.avgDeal)}</td>
-                      <td className="num px-4 py-3 text-right">{formatCurrency(t.cpa)}</td>
-                    </Row>
-                  ))}
+                  {paginatedTeams.map((t, i) => {
+                    const rank = (currentTeamPage - 1) * teamPageSize + i + 1;
+                    const isTop3 = rank <= 3;
+                    const leaderRev = teamStats[0]?.revenue || 1;
+                    const share = leaderRev > 0 ? Math.min(100, (t.revenue / leaderRev) * 100) : 0;
+                    const agents = agentsPerTeam.get(t.team_id ?? "none") ?? 0;
+                    const isMine = myTeamId != null && (t.team_id ?? "none") === myTeamId;
+                    return (
+                      <Row
+                        key={(t.team_id ?? "none") + i}
+                        rank={rank}
+                        highlight={isMine}
+                      >
+                        <td className="px-4 py-3 font-medium">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={
+                                "flex h-8 w-8 items-center justify-center rounded-md text-[10px] font-bold " +
+                                (isTop3
+                                  ? "bg-[var(--game-teal)]/15 text-[var(--game-teal)]"
+                                  : "bg-secondary text-muted-foreground")
+                              }
+                            >
+                              {teamInitialsLocal(t.team_name)}
+                            </span>
+                            <div>
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <span>{t.team_name}</span>
+                                {isMine && (
+                                  <span className="rounded bg-primary/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-primary">
+                                    You
+                                  </span>
+                                )}
+                              </div>
+                              <div className="mt-1 h-1 w-28 overflow-hidden rounded-full bg-black/40">
+                                <div
+                                  className="h-full rounded-full bg-[var(--game-teal)]/80"
+                                  style={{ width: `${share}%` }}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="num px-4 py-3 text-right text-muted-foreground">{agents}</td>
+                        <td className="num px-4 py-3 text-right font-semibold text-[var(--game-orange)]">
+                          {formatCurrency(t.revenue)}
+                        </td>
+                        <td className="num px-4 py-3 text-right">{t.count}</td>
+                        <td className="num px-4 py-3 text-right">{formatCurrency(t.avgDeal)}</td>
+                        <td className="num px-4 py-3 text-right">{formatCurrency(t.cpa)}</td>
+                        <td className="num px-4 py-3 text-right text-muted-foreground">
+                          {share.toFixed(0)}%
+                        </td>
+                      </Row>
+                    );
+                  })}
                   {!loading && teamStats.length === 0 && (
-                    <tr><td colSpan={6} className="px-4 py-12 text-center text-sm text-muted-foreground">No team sales yet.</td></tr>
+                    <tr>
+                      <td colSpan={8} className="px-4 py-12 text-center text-sm text-muted-foreground">
+                        No team sales yet.
+                      </td>
+                    </tr>
                   )}
                 </tbody>
               </table>
@@ -518,6 +608,13 @@ function LeaderboardsPage() {
       </Tabs>
     </div>
   );
+}
+
+function teamInitialsLocal(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
 function PaginationControls({

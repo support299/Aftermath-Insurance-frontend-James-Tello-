@@ -1,7 +1,8 @@
 import { Flame, ShoppingBag } from "lucide-react";
 import { formatCurrency } from "@/lib/sales";
-import { agentInitials, type AgentProgress } from "@/lib/gamification";
+import { type AgentProgress } from "@/lib/gamification";
 import { LevelBadge } from "@/components/gamification/LevelBadge";
+import { AgentRankMark } from "@/components/gamification/AgentRankMark";
 
 export interface RankedAgent {
   agent_id: string;
@@ -51,18 +52,11 @@ export function TopAgentsBoard({ agents, highlightId }: { agents: RankedAgent[];
                   <span className="num w-6 shrink-0 text-xs font-semibold text-muted-foreground">
                     #{rank}
                   </span>
-                  <div
-                    className={
-                      "flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold " +
-                      (isTop3 ? "bg-[var(--game-orange)]/20 text-[var(--game-orange)]" : "bg-secondary")
-                    }
-                  >
-                    {agentInitials(agent.agent_name)}
-                  </div>
+                  <AgentRankMark progress={agent.progress} size="md" />
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-1.5">
                       <span className="truncate text-sm font-medium">{agent.agent_name}</span>
-                      <LevelBadge progress={agent.progress} />
+                      <LevelBadge progress={agent.progress} showCrest={false} />
                     </div>
                     <div className="mt-0.5 flex items-center gap-3 text-[11px] text-muted-foreground">
                       {agent.progress && agent.progress.current_streak > 0 ? (
