@@ -75,8 +75,7 @@ type FormState = {
 };
 
 function SalesEntryPage() {
-  const { profile, user, session, roles } = useAuth();
-  const isAdmin = roles.includes("admin");
+  const { profile, user, session } = useAuth();
   const navigate = useNavigate();
   const updateGhlFn = updateGhlContactFromSale;
   const [teams, setTeams] = useState<{ id: string; name: string }[]>([]);
@@ -463,38 +462,14 @@ function SalesEntryPage() {
                   <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                     Estimated payout
                   </div>
-                  {isAdmin ? (
-                    <p className="mt-0.5 text-[11px] text-muted-foreground">
-                      {myLevelCode
-                        ? `Comp level: ${myLevelCode} · monthly × months × rate`
-                        : "Assign a comp level in Settings → Users to unlock rates."}
-                    </p>
-                  ) : (
-                    <p className="mt-0.5 text-[11px] text-muted-foreground">
-                      What you&apos;re estimated to make on this deal
-                    </p>
-                  )}
+                  <p className="mt-0.5 text-[11px] text-muted-foreground">
+                    What you&apos;re estimated to make on this deal
+                  </p>
                 </div>
                 <div className="num text-xl font-semibold text-primary">
                   {formatCurrency(payoutEstimate.estimated_payout)}
                 </div>
               </div>
-              {isAdmin &&
-                payoutEstimate.lines.filter((l) => l.estimated_check > 0 || l.matched).length > 0 && (
-                  <ul className="mt-3 space-y-1 border-t border-border/60 pt-3 text-xs">
-                    {payoutEstimate.lines.map((l, i) => (
-                      <li key={i} className="flex justify-between gap-2 text-muted-foreground">
-                        <span>
-                          {l.product || "—"}
-                          {l.matched
-                            ? ` · ${l.advance_months}mo @ ${(l.rate * 100).toFixed(0)}%`
-                            : " · no rate configured"}
-                        </span>
-                        <span className="num text-foreground">{formatCurrency(l.estimated_check)}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
             </div>
           )}
         </div>

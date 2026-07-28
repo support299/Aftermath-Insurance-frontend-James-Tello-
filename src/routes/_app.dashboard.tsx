@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { format } from "date-fns";
-import { ArrowDown, ArrowUp, DollarSign, Hash, Heart, LineChart as LineChartIcon, Package, Percent, ShieldPlus, TrendingUp, Wallet, Users, PlusCircle } from "lucide-react";
+import { ArrowDown, ArrowUp, Banknote, DollarSign, Hash, Heart, LineChart as LineChartIcon, Package, Percent, ShieldPlus, TrendingUp, Wallet, Users, PlusCircle } from "lucide-react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
@@ -161,6 +161,22 @@ function DashboardPage() {
 
   const m = useMemo(() => computeMetrics(filtered), [filtered]);
   const mPrev = useMemo(() => computeMetrics(prevSales), [prevSales]);
+  const estimatedPayout = useMemo(
+    () =>
+      filtered.reduce((sum, s) => {
+        const v = Number(s.estimated_payout);
+        return sum + (Number.isFinite(v) ? v : 0);
+      }, 0),
+    [filtered],
+  );
+  const estimatedPayoutPrev = useMemo(
+    () =>
+      prevSales.reduce((sum, s) => {
+        const v = Number(s.estimated_payout);
+        return sum + (Number.isFinite(v) ? v : 0);
+      }, 0),
+    [prevSales],
+  );
   const cpa = useMemo(() => computeCpa(expenses, filtered), [expenses, filtered]);
   const cpaPrev = useMemo(() => computeCpa(prevExpenses, prevSales), [prevExpenses, prevSales]);
   const trend = useMemo(() => buildTrend(filtered, range.from, range.to, expenses), [filtered, range.from.getTime(), range.to.getTime(), expenses]);
@@ -351,7 +367,48 @@ function DashboardPage() {
           corner={<span>{cpa.numSales.toLocaleString()} sale{cpa.numSales === 1 ? "" : "s"}</span>} />
       </div>
 
-      {/* 13-week tracker / milestones / income goal — under Total Revenue area */}
+      {/* Estimated payout — prominent, above Target Income / tracker */}
+      <div className="game-panel relative overflow-hidden p-5 sm:p-6">
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[var(--game-teal)]/50 to-transparent" />
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[var(--game-teal)]/35 bg-[var(--game-teal)]/10">
+              <Banknote className="h-5 w-5 text-[var(--game-teal)]" />
+            </div>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-widest text-[var(--game-teal)]">
+                Estimated payout
+              </p>
+              <h3 className="text-base font-bold">
+                {isAgentOnly ? "Your commission for this period" : "Estimated commission for this period"}
+              </h3>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {format(range.from, "MMM d, yyyy")} → {format(range.to, "MMM d, yyyy")}
+                {" · "}
+                {m.numSales.toLocaleString()} sale{m.numSales === 1 ? "" : "s"}
+              </p>
+            </div>
+          </div>
+          <div className="sm:text-right">
+            <p className="num text-3xl font-bold tracking-tight text-[var(--game-teal)] sm:text-4xl">
+              {formatCurrency(estimatedPayout)}
+            </p>
+            {(() => {
+              const delta = pctChange(estimatedPayout, estimatedPayoutPrev);
+              if (delta === null) return null;
+              const up = delta >= 0;
+              return (
+                <p className={`mt-1 flex items-center gap-1 text-xs sm:justify-end ${up ? "text-[var(--success)]" : "text-destructive"}`}>
+                  {up ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />}
+                  {Math.abs(delta).toFixed(1)}% vs previous period
+                </p>
+              );
+            })()}
+          </div>
+        </div>
+      </div>
+
+      {/* 13-week tracker / milestones / income goal */}
       {(isAgentOnly || !!user) && (
         <OnboardingProgressPanel agentId={isAgentOnly ? user?.id : undefined} />
       )}

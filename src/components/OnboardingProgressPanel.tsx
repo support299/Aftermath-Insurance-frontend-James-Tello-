@@ -215,10 +215,9 @@ export function OnboardingProgressPanel({ agentId }: { agentId?: string }) {
           <p className="mt-1 text-[11px] text-[var(--game-teal)]">
             {income_goal.progress_pct}% toward goal
           </p>
-          <div className="mt-3 grid grid-cols-2 gap-2">
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
             {[
               { label: "Expected (blended)", value: income_goal.expected_income_blended },
-              { label: "Est. payout YTD", value: income_goal.estimated_payout_ytd },
               { label: "Submitted", value: income_goal.submitted_ytd },
               { label: "Business needed", value: income_goal.business_needed },
             ].map((row) => (

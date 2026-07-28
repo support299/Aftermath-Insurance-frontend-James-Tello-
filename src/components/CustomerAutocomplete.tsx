@@ -158,7 +158,9 @@ export function CustomerAutocomplete({ value, onChange, onSelect, placeholder }:
   const resolvedContactRef = useRef(false);
   const resolvingRef = useRef(false);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const { user } = useAuth();
+  const { user, roles } = useAuth();
+  // Agents only see contacts assigned to them in GHL. Admins/managers search all.
+  const canSearchAllContacts = roles.includes("admin") || roles.includes("manager");
 
   const query = value.trim();
 
@@ -192,19 +194,26 @@ export function CustomerAutocomplete({ value, onChange, onSelect, placeholder }:
       setResults([]);
       return;
     }
+    // Agents without a linked GHL user cannot safely search (would leak others' contacts).
+    if (!canSearchAllContacts && !ghlUserId) {
+      setResults([]);
+      return;
+    }
     let cancelled = false;
     setLoading(true);
     const t = setTimeout(async () => {
       const term = query.replace(/[(),]/g, " ").trim();
       const like = `%${term}%`;
-      const { data, error } = await supabase
+      let q = supabase
         .from("ghl_contacts")
         .select("id, name, email, phone, user_id")
-        .or(
-          `name.ilike.${like},email.ilike.${like},id.ilike.${like},phone.ilike.${like},user_id.ilike.${like}`,
-        )
+        .or(`name.ilike.${like},email.ilike.${like},id.ilike.${like},phone.ilike.${like}`)
         .order("name")
         .limit(8);
+      if (!canSearchAllContacts && ghlUserId) {
+        q = q.eq("user_id", ghlUserId);
+      }
+      const { data, error } = await q;
       if (cancelled) return;
       if (error) {
         console.error("[CustomerAutocomplete]", error);
@@ -219,7 +228,7 @@ export function CustomerAutocomplete({ value, onChange, onSelect, placeholder }:
       cancelled = true;
       clearTimeout(t);
     };
-  }, [query, selectedContact]);
+  }, [query, selectedContact, canSearchAllContacts, ghlUserId]);
 
   useEffect(() => {
     const onClick = (e: MouseEvent) => {

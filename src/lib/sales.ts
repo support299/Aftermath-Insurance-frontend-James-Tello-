@@ -79,6 +79,7 @@ export interface SaleRow {
   add_ons: string[];
   lead_source: string | null;
   cost_per_lead: number | null;
+  estimated_payout?: number | null;
   notes: string | null;
   reporting_only?: boolean;
   line_items?: SaleLineItem[] | null;
