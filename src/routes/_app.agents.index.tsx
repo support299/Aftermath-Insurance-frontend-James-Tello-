@@ -180,6 +180,7 @@ function AgentsIndexPage() {
               <tr>
                 <th className="px-4 py-3 text-left">Agent</th>
                 <th className="px-4 py-3 text-left">Team</th>
+                <th className="px-4 py-3 text-left">States</th>
                 <th className="px-4 py-3 text-left">Week</th>
                 <th className="px-4 py-3 text-left">Phase</th>
                 <th className="px-4 py-3 text-right">Phase submitted</th>
@@ -218,6 +219,18 @@ function AgentsIndexPage() {
                     </div>
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">{a.team_name ?? "Unassigned"}</td>
+                  <td className="px-4 py-3">
+                    {(a.licensed_states?.length ?? 0) > 0 ? (
+                      <span
+                        className="inline-flex max-w-[140px] truncate rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-200"
+                        title={a.licensed_states.join(", ")}
+                      >
+                        {a.licensed_states.length} state{a.licensed_states.length === 1 ? "" : "s"}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
+                  </td>
                   <td className="num px-4 py-3">
                     {a.current_week > 0 ? (
                       <span className={a.tracker_active ? "font-medium" : "text-muted-foreground"}>
@@ -268,7 +281,7 @@ function AgentsIndexPage() {
               ))}
               {!loading && rows.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="px-4 py-12 text-center text-sm text-muted-foreground">
+                  <td colSpan={10} className="px-4 py-12 text-center text-sm text-muted-foreground">
                     No agents match your filters.
                   </td>
                 </tr>

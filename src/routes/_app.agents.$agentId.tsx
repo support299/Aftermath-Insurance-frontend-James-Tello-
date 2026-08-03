@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { format } from "date-fns";
-import { ArrowDown, ArrowUp, ArrowLeft, DollarSign, Heart, LineChart as LineChartIcon, Package, Percent, ShieldPlus, TrendingUp, Wallet, Users } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowLeft, DollarSign, Heart, LineChart as LineChartIcon, Package, Percent, ShieldPlus, Wallet, Users } from "lucide-react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { supabase } from "@/integrations/supabase/client";
 import { useCompanySettings } from "@/lib/company-settings";
@@ -16,6 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Input } from "@/components/ui/input";
 import { DateField } from "@/components/DateField";
 import { OnboardingProgressPanel } from "@/components/OnboardingProgressPanel";
+import { StateLicenseMap } from "@/components/StateLicenseMap";
 import { AgentRankMark } from "@/components/gamification/AgentRankMark";
 import { LevelBadge } from "@/components/gamification/LevelBadge";
 import { fetchAllProgress, type AgentProgress } from "@/lib/gamification";
@@ -47,7 +48,9 @@ type TargetSet = {
 
 function AgentDashboardPage() {
   const { agentId } = Route.useParams();
-  const { session } = useAuth();
+  const { session, user, roles } = useAuth();
+  const canEditLicenses =
+    !!user && (user.id === agentId || roles.includes("admin") || roles.includes("manager"));
   const { reportingTimezone } = useCompanySettings();
   const [rangeKey, setRangeKey] = useState<DateRangeKey>("month");
   const [customFrom, setCustomFrom] = useState<Date | undefined>(undefined);
@@ -287,42 +290,35 @@ function AgentDashboardPage() {
 
       {/* Metric cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <MetricCard title="Total Revenue" icon={DollarSign} value={formatCurrency(m.totalRevenue)}
+        <MetricCard title="Total AP" icon={DollarSign} value={formatCurrency(m.totalRevenue)}
           delta={pctChange(m.totalRevenue, mPrev.totalRevenue)} sub="vs previous period"
           corner={<span>{m.numSales.toLocaleString()} sale{m.numSales === 1 ? "" : "s"}</span>} />
-        <MetricCard title="Average Deal Size" icon={Wallet} value={formatCurrency(m.avgDealSize)}
-          delta={pctChange(m.avgDealSize, mPrev.avgDealSize)}
-          sub={`Median: ${formatCurrency(m.medianDealSize)}`} />
-        <MetricCard title="Add-on Attach Rate" icon={Percent} value={formatPct(m.attachRate)}
-          delta={pctChange(m.attachRate, mPrev.attachRate)}
-          sub={targets ? `Target: ${formatPct(Number(targets.addon_attach_ratio_target))}` : "Across all sales"}
-          targetValue={targets ? Number(targets.addon_attach_ratio_target) : null}
-          currentValue={m.attachRate} />
-        <MetricCard title="Life Insurance Revenue" icon={ShieldPlus} value={formatCurrency(m.lifeRevenue)}
-          delta={pctChange(m.lifeRevenue, mPrev.lifeRevenue)}
-          sub={targets ? `Target: ${formatCurrency(Number(targets.life_revenue_target))}` : "No target set"}
-          targetValue={targets ? Number(targets.life_revenue_target) : null}
-          currentValue={m.lifeRevenue} />
-        <MetricCard title="Life Attach Ratio" icon={TrendingUp} value={formatPct(m.lifeAttachRatio)}
-          delta={pctChange(m.lifeAttachRatio, mPrev.lifeAttachRatio)}
-          sub={targets ? `Target: ${formatPct(Number(targets.life_attach_ratio_target))}` : "No target set"}
-          targetValue={targets ? Number(targets.life_attach_ratio_target) : null}
-          currentValue={m.lifeAttachRatio} />
-        <MetricCard title="Health Insurance Revenue" icon={Heart} value={formatCurrency(m.healthRevenue)}
+        <MetricCard title="Total Health AP" icon={Heart} value={formatCurrency(m.healthRevenue)}
           delta={pctChange(m.healthRevenue, mPrev.healthRevenue)}
           sub={targets ? `Target: ${formatCurrency(Number(targets.health_revenue_target))}` : "No target set"}
           targetValue={targets ? Number(targets.health_revenue_target) : null}
           currentValue={m.healthRevenue} />
-        <MetricCard title="Health Attach Ratio" icon={Percent} value={formatPct(m.healthAttachRatio)}
-          delta={pctChange(m.healthAttachRatio, mPrev.healthAttachRatio)}
-          sub={targets ? `Target: ${formatPct(Number(targets.health_attach_ratio_target))}` : "No target set"}
-          targetValue={targets ? Number(targets.health_attach_ratio_target) : null}
-          currentValue={m.healthAttachRatio} />
-        <MetricCard title="Add-on Revenue" icon={Package} value={formatCurrency(m.addonRevenue)}
+        <MetricCard title="Total Life AP" icon={ShieldPlus} value={formatCurrency(m.lifeRevenue)}
+          delta={pctChange(m.lifeRevenue, mPrev.lifeRevenue)}
+          sub={targets ? `Target: ${formatCurrency(Number(targets.life_revenue_target))}` : "No target set"}
+          targetValue={targets ? Number(targets.life_revenue_target) : null}
+          currentValue={m.lifeRevenue} />
+        <AttachRatesCard
+          lifeRate={m.lifeAttachRatio}
+          lifePrev={mPrev.lifeAttachRatio}
+          lifeTarget={targets ? Number(targets.life_attach_ratio_target) : null}
+          addonRate={m.attachRate}
+          addonPrev={mPrev.attachRate}
+          addonTarget={targets ? Number(targets.addon_attach_ratio_target) : null}
+        />
+        <MetricCard title="Add-on AP" icon={Package} value={formatCurrency(m.addonRevenue)}
           delta={pctChange(m.addonRevenue, mPrev.addonRevenue)}
           sub={targets ? `Target: ${formatCurrency(Number(targets.addon_revenue_target))}` : "No target set"}
           targetValue={targets ? Number(targets.addon_revenue_target) : null}
           currentValue={m.addonRevenue} />
+        <MetricCard title="Average Deal Size" icon={Wallet} value={formatCurrency(m.avgDealSize)}
+          delta={pctChange(m.avgDealSize, mPrev.avgDealSize)}
+          sub={`Median: ${formatCurrency(m.medianDealSize)}`} />
         <MetricCard title="Cost per Acquisition" icon={Users} value={formatCurrency(cpa.avgCpa)}
           delta={pctChange(cpa.avgCpa, cpaPrev.avgCpa)} invertDelta
           sub={`Total cost: ${formatCurrency(cpa.totalCost)}`}
@@ -330,6 +326,8 @@ function AgentDashboardPage() {
       </div>
 
       <OnboardingProgressPanel agentId={agentId} />
+
+      <StateLicenseMap agentId={agentId} editable={canEditLicenses} />
 
       {/* Trend chart */}
       <div className="surface-card p-4 sm:p-6">
@@ -401,6 +399,65 @@ function AgentDashboardPage() {
         <TopProductsCard title="Most sold life insurance" items={topByKind.life} loading={loading} unitLabel="Policies" />
         <TopProductsCard title="Most sold health insurance" items={topByKind.health} loading={loading} unitLabel="Policies" />
         <TopProductsCard title="Most sold add-ons" items={topByKind.addon} loading={loading} unitLabel="Units" />
+      </div>
+    </div>
+  );
+}
+
+function AttachRatesCard({
+  lifeRate, lifePrev, lifeTarget, addonRate, addonPrev, addonTarget,
+}: {
+  lifeRate: number;
+  lifePrev: number;
+  lifeTarget: number | null;
+  addonRate: number;
+  addonPrev: number;
+  addonTarget: number | null;
+}) {
+  const lifeDelta = pctChange(lifeRate, lifePrev);
+  const addonDelta = pctChange(addonRate, addonPrev);
+  return (
+    <div className="surface-card p-5">
+      <div className="flex items-center justify-between">
+        <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Attach Rates</div>
+        <Percent className="h-4 w-4 text-muted-foreground" />
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-4">
+        <AttachRateStat label="Life" value={formatPct(lifeRate)} delta={lifeDelta} target={lifeTarget} />
+        <AttachRateStat label="Add-on" value={formatPct(addonRate)} delta={addonDelta} target={addonTarget} />
+      </div>
+    </div>
+  );
+}
+
+function AttachRateStat({
+  label, value, delta, target,
+}: {
+  label: string;
+  value: string;
+  delta: number | null;
+  target: number | null;
+}) {
+  const showDelta = delta !== null;
+  const positive = (delta ?? 0) >= 0;
+  const hasTarget = typeof target === "number" && target > 0;
+  return (
+    <div>
+      <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{label}</div>
+      <div className="num mt-1 text-2xl font-bold tracking-tight">{value}</div>
+      <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px]">
+        {showDelta && (
+          <span
+            className={
+              "flex items-center gap-0.5 rounded-full px-1.5 py-0.5 font-medium " +
+              (positive ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive")
+            }
+          >
+            {positive ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />}
+            {Math.abs(delta!).toFixed(1)}%
+          </span>
+        )}
+        {hasTarget && <span className="text-muted-foreground">Target: {formatPct(target!)}</span>}
       </div>
     </div>
   );

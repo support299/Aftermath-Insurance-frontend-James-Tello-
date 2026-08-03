@@ -17,6 +17,7 @@ export interface AgentListRow {
   phase_goal: number;
   tracker_active: boolean;
   estimated_payout_ytd: number;
+  licensed_states?: string[];
   level_rank: number;
   level_name: string;
   level_tier: "level" | "prestige" | "hof" | string;

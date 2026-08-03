@@ -341,6 +341,7 @@ export type Database = {
           phone: string | null
           team_id: string | null
           comp_level_id: string | null
+          licensed_states: string[]
           updated_at: string
         }
         Insert: {
@@ -352,6 +353,7 @@ export type Database = {
           phone?: string | null
           team_id?: string | null
           comp_level_id?: string | null
+          licensed_states?: string[]
           updated_at?: string
         }
         Update: {
@@ -363,6 +365,7 @@ export type Database = {
           phone?: string | null
           team_id?: string | null
           comp_level_id?: string | null
+          licensed_states?: string[]
           updated_at?: string
         }
         Relationships: [
